@@ -57,7 +57,27 @@ time.
    git clone git@github.com:leotyang/DSO_585_project.git
    ```
 
-## 3. Commonly used commands
+## 3. Copying file paths (Mac and PC)
+
+You'll frequently need to paste a file or folder's path — e.g. to `cd` into the repo,
+or to point a command at a specific file. Instead of typing it out, use your OS's
+built-in shortcut:
+
+**Mac (Finder):**
+- Right-click the file/folder → hold `Option` → the menu item **"Copy [name]"**
+  changes to **"Copy as Pathname"**. Click it to copy the full absolute path.
+- Alternative: select the file, then press `Cmd+Option+C`.
+- Alternative: just drag the file/folder from Finder directly into a Terminal
+  window — it inserts the full path at the cursor.
+
+**PC (File Explorer):**
+- Hold `Shift` and right-click the file/folder → click **"Copy as path"**.
+- (Some Windows versions show this without needing to hold `Shift` — just
+  right-click.)
+- Paste with `Ctrl+V`; note it'll be wrapped in quotes, which is fine for most
+  commands.
+
+## 4. Commonly used commands
 
 | Command | What it does |
 |---|---|
@@ -82,7 +102,7 @@ git commit -m "Add exploratory data analysis notebook"
 git push -u origin leo/add-eda
 ```
 
-## 4. Branching strategy for this project
+## 5. Branching strategy for this project
 
 - `main` — the production/final branch. Nobody commits to this directly.
 - `dev` — the shared working branch. All personal branches merge here first, and
@@ -96,7 +116,7 @@ half-finished or broken code could block or break everyone else's work. Branches
 you experiment freely without affecting the shared codebase until your work is
 reviewed and ready.
 
-## 5. What is a Pull Request (PR)?
+## 6. What is a Pull Request (PR)?
 
 A **Pull Request** is a request to merge your branch's changes into another branch
 (here, `dev`), along with a review step before that happens.
@@ -153,7 +173,7 @@ Why not just merge directly? Two reasons:
 - Delete your branch after it's merged (GitHub offers a button for this) to keep
   things tidy.
 
-## 6. Quick end-to-end example
+## 7. Quick end-to-end example
 
 ```
 git checkout dev
