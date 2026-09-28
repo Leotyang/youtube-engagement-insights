@@ -68,6 +68,18 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-09-28 (evening):** Reconciled the Colab-prototyped pipeline into this repo as the
+  single source of truth. `src/` is now a package (`from src import config`; run with
+  `python -m src.<module>` from the repo root, or add the Drive Project folder to
+  `sys.path` in Colab): `config.py` (secrets via .env or Colab userdata, channel list,
+  trait taxonomy v1, tagging model), `youtube_api.py` (google-api-python-client wrappers,
+  matching what Colab has preinstalled), `ingest.py` (`load_or_ingest()` + engagement
+  snapshots), `tagging.py` (`load_or_tag()`, Claude tagging with model/prompt version
+  stored per row, skips already-tagged videos), `model.py` (`fit_or_skip()` black-box
+  RandomForest baseline on log views with a chronological split). Teammates don't use
+  git and work in Colab against the shared Drive folder `DSO 585/Project`, so
+  `scripts/publish_to_drive.sh` rsyncs the repo there (never touches the `.ipynb`).
+  Workflow: commit here, then publish to Drive. No API keys yet; nothing has run on data.
 - **2026-09-28 (later):** Agreed a module layout: one script per pipeline stage in
   `src/`, modules exchange CSVs in `data/raw` → `interim` → `processed`. Scaffolded the
   first stage: `src/config.py` (channel list + paths + `.env` loading),

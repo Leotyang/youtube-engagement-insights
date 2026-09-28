@@ -108,9 +108,9 @@ This project combines video metadata, engagement metrics, and (where available) 
 **Before meeting with Austin**
 - [ ] Set up Jira board
 - [ ] Choose a list of channels/videos for model training (fill `CHANNEL_IDS` in `src/config.py`)
-- [ ] Set up YouTube API — get an API key, put it in `.env`, run `python src/ingest.py` (module and script scaffolded 2026-09-28)
-- [ ] Black-box model: raw engagement metrics ~ views
-- [ ] Explore LLM video tagging & embedding capabilities — research cheap LLM API tokens, build pipeline, decide on cloud data storage
+- [ ] Set up YouTube API — get an API key into `.env` / Colab secrets, then run `python -m src.ingest` (module and script done 2026-09-28)
+- [ ] Black-box model: raw engagement metrics ~ views (baseline scaffold in `src/model.py`; needs ingested data to run)
+- [ ] Explore LLM video tagging & embedding capabilities — research cheap LLM API tokens, decide on cloud data storage (tagging pipeline scaffold in `src/tagging.py`)
 
 **Phase I deliverables**
 - [ ] Form team roles (business framing, data/context, methods, AI-assisted implementation, verification, stakeholder communication)
@@ -122,7 +122,7 @@ This project combines video metadata, engagement metrics, and (where available) 
 **Phase II pipeline**
 - [ ] Identify and vet data sources (audience-demographics mitigation strategy)
 - [ ] Define engagement and virality metrics precisely
-- [ ] Build the trait taxonomy (content, format, hashtags, creator background, theme, industry)
+- [ ] Build the trait taxonomy (content, format, hashtags, creator background, theme, industry) — v1 definitions in `src/config.py`, needs team review
 - [ ] Build LLM-based trait-tagging pipeline on a sample of videos
 - [ ] Build the engagement model (traits → views/likes/comments)
 - [ ] Build the audience preference/segment model

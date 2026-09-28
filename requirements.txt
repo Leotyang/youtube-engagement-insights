@@ -1,3 +1,6 @@
 pandas
-requests
+numpy
+scikit-learn
+google-api-python-client
+anthropic
 python-dotenv
