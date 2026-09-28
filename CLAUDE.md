@@ -68,8 +68,24 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-09-28:** Consolidated three separate Claude Code CLI sessions that had been
+  running against this same repo folder into this one. Two of the three had drifted
+  into session-management housekeeping (relocating a session transcript between
+  project folders) rather than project work, so there was no divergent project
+  content to merge — the repo's files already reflected the latest state. Committed
+  the previously-untracked `DSO_585_Brief_Deck.pptx` (built 2026-09-10) so it isn't
+  orphaned in a single session's local state. Going forward, do project work in this
+  session/thread rather than opening parallel CLI sessions against the same folder,
+  to avoid this fragmentation.
 - **2026-09-10:** Project scoped. Main question and planned pipeline defined (see
-  above). No data collection or modeling started yet.
+  above). Wrote the full proposal-brief-style README (business problem, research
+  questions, data/API strategy, methodology, timeline, contingency plan) modeled on
+  classmates' sample scoping docs, and CLAUDE.md/GIT_WORKFLOW.md. Built a first-draft
+  executive buy-in slide deck (`DSO_585_Brief_Deck.pptx`) using the USC Marshall
+  template. Talked through the engagement model → audience preference model →
+  optimization model methodology in depth (nested vs. fully-segmented modeling,
+  confounding vs. effect modification) to sharpen the slide bullets; no data
+  collection or modeling has started yet.
 
 ## Repo conventions
 
