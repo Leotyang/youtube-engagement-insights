@@ -1,88 +1,99 @@
-"""Thin wrappers over the YouTube Data API v3 (google-api-python-client).
+"""Wrappers over the YouTube Data API v3 (google-api-python-client).
 
 Quota (units per call, 10,000/day default):
   channels.list 1 | playlistItems.list 1 (50 videos/page) | videos.list 1 (50 videos/call)
-One channel with 200 videos costs roughly 1 + 4 + 4 = 9 units.
+One channel with 300 videos in the window costs roughly 1 + 6 + 6 = 13 units.
+
+Every field the API returns (for the parts an API key can access) is kept and flattened
+to dotted column names, e.g. snippet.title, statistics.viewCount, contentDetails.duration.
 """
+
+import os
+import sys
+from urllib.parse import urlparse
 
 import pandas as pd
 from googleapiclient.discovery import build
 
-from src import config
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import YOUTUBE_API_KEY
+
+# auditDetails / contentOwnerDetails (channels) and fileDetails / processingDetails /
+# suggestions (videos) need owner OAuth, so they're excluded. localizations and player
+# are excluded as noise (per-language title copies, embed HTML).
+CHANNEL_PARTS = "id,snippet,contentDetails,statistics,status,topicDetails,brandingSettings"
+VIDEO_PARTS = "id,snippet,contentDetails,statistics,status,topicDetails,liveStreamingDetails,recordingDetails,paidProductPlacementDetails"
 
 
 def get_client():
-    if not config.YOUTUBE_API_KEY:
-        return None
-    return build("youtube", "v3", developerKey=config.YOUTUBE_API_KEY)
+    if not YOUTUBE_API_KEY:
+        sys.exit("YOUTUBE_API_KEY is empty. Copy .env.example to .env and fill it in.")
+    return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
 
-def channel_id_from_handle(youtube, handle):
-    """'@mkbhd' -> 'UC...' channel ID."""
-    resp = youtube.channels().list(part="id", forHandle=handle.lstrip("@")).execute()
-    return resp["items"][0]["id"]
+def flatten(items):
+    """API items (nested dicts) -> flat DataFrame; list-valued fields joined with '|'."""
+    df_flat = pd.json_normalize(items)
+    for column in df_flat.columns:
+        if df_flat[column].apply(lambda value: isinstance(value, list)).any():
+            df_flat[column] = df_flat[column].apply(lambda value: "|".join(map(str, value)) if isinstance(value, list) else value)
+    return df_flat
 
 
-def get_channel_info(youtube, channel_ids):
-    """One dict per channel: id, title, uploads playlist, subscriber/video counts."""
-    channels = []
-    for start in range(0, len(channel_ids), 50):
-        resp = youtube.channels().list(
-            part="snippet,contentDetails,statistics",
-            id=",".join(channel_ids[start:start + 50]),
-        ).execute()
-        for item in resp.get("items", []):
-            channels.append({
-                "channel_id": item["id"],
-                "channel_title": item["snippet"]["title"],
-                "uploads_playlist_id": item["contentDetails"]["relatedPlaylists"]["uploads"],
-                "subscriber_count": int(item["statistics"].get("subscriberCount", 0)),
-                "channel_video_count": int(item["statistics"].get("videoCount", 0)),
-            })
-    return channels
+def channel_lookup_params(url):
+    """Map a channel URL to the channels.list filter the API supports for it."""
+    path_parts = [part for part in urlparse(url).path.split("/") if part]
+    if path_parts[0].startswith("@"):
+        return {"forHandle": path_parts[0]}
+    if path_parts[0] == "channel":
+        return {"id": path_parts[1]}
+    if path_parts[0] == "user":
+        return {"forUsername": path_parts[1]}
+    sys.exit(f"Cannot resolve {url}: legacy /c/ URLs aren't supported by the API. Use the channel's @handle URL.")
 
 
-def get_video_ids(youtube, playlist_id, max_videos=None):
-    """All video IDs in a playlist (use the channel's uploads playlist), newest first."""
+def get_channels(youtube, channel_urls):
+    """One flattened row per channel URL, with the source URL kept as channel_url."""
+    items = []
+    for url in channel_urls:
+        resp = youtube.channels().list(part=CHANNEL_PARTS, **channel_lookup_params(url)).execute()
+        if not resp.get("items"):
+            print(f"No channel found for {url}, skipping")
+            continue
+        items.append({"channel_url": url, **resp["items"][0]})
+    return flatten(items)
+
+
+def get_video_ids(youtube, playlist_id, published_after):
+    """IDs of videos in a playlist (use the channel's uploads playlist) published on/after
+    `published_after` (tz-aware datetime). Pages newest-first and stops at the cutoff."""
     video_ids = []
     page_token = None
     while True:
         resp = youtube.playlistItems().list(
             part="contentDetails", playlistId=playlist_id, maxResults=50, pageToken=page_token
         ).execute()
-        video_ids.extend(item["contentDetails"]["videoId"] for item in resp.get("items", []))
-        page_token = resp.get("nextPageToken")
-        if not page_token or (max_videos and len(video_ids) >= max_videos):
-            break
-    return video_ids[:max_videos] if max_videos else video_ids
-
-
-def get_video_details(youtube, video_ids):
-    """Metadata + engagement counts for a list of video IDs (batched 50 per call)."""
-    videos = []
-    for start in range(0, len(video_ids), 50):
-        resp = youtube.videos().list(
-            part="snippet,statistics,contentDetails", id=",".join(video_ids[start:start + 50])
-        ).execute()
         for item in resp.get("items", []):
-            snippet = item["snippet"]
-            stats = item["statistics"]
-            details = item["contentDetails"]
-            videos.append({
-                "video_id": item["id"],
-                "channel_id": snippet["channelId"],
-                "channel_title": snippet["channelTitle"],
-                "title": snippet["title"],
-                "description": snippet.get("description", ""),
-                "tags": "|".join(snippet.get("tags", [])),
-                "category_id": snippet.get("categoryId"),
-                "published_at": snippet["publishedAt"],
-                # pandas parses ISO-8601 durations like PT1H2M3S directly; no isodate needed.
-                "duration_seconds": pd.Timedelta(details["duration"]).total_seconds(),
-                "definition": details.get("definition"),
-                "caption_available": details.get("caption"),
-                "view_count": int(stats.get("viewCount", 0)),
-                "like_count": int(stats.get("likeCount", 0)),
-                "comment_count": int(stats.get("commentCount", 0)),
-            })
-    return videos
+            if pd.Timestamp(item["contentDetails"]["videoPublishedAt"]) >= published_after:
+                video_ids.append(item["contentDetails"]["videoId"])
+        page_token = resp.get("nextPageToken")
+        oldest_on_page = min(pd.Timestamp(item["contentDetails"]["videoPublishedAt"]) for item in resp["items"])
+        if not page_token or oldest_on_page < published_after:
+            break
+    return video_ids
+
+
+def get_videos(youtube, video_ids):
+    """Flattened metadata + engagement for a list of video IDs (50 per call)."""
+    items = []
+    for start in range(0, len(video_ids), 50):
+        resp = youtube.videos().list(part=VIDEO_PARTS, id=",".join(video_ids[start:start + 50])).execute()
+        items.extend(resp.get("items", []))
+    df_videos = flatten(items)
+    if "contentDetails.duration" in df_videos:
+        # pandas parses ISO-8601 durations like PT1H2M3S directly.
+        df_videos["duration_seconds"] = df_videos["contentDetails.duration"].apply(lambda value: pd.Timedelta(value).total_seconds())
+    for column in ["statistics.viewCount", "statistics.likeCount", "statistics.commentCount", "statistics.favoriteCount"]:
+        if column in df_videos:
+            df_videos[column] = pd.to_numeric(df_videos[column], errors="coerce")
+    return df_videos

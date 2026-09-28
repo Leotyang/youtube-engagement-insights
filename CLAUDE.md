@@ -68,18 +68,22 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
-- **2026-09-28 (evening):** Reconciled the Colab-prototyped pipeline into this repo as the
-  single source of truth. `src/` is now a package (`from src import config`; run with
-  `python -m src.<module>` from the repo root, or add the Drive Project folder to
-  `sys.path` in Colab): `config.py` (secrets via .env or Colab userdata, channel list,
-  trait taxonomy v1, tagging model), `youtube_api.py` (google-api-python-client wrappers,
-  matching what Colab has preinstalled), `ingest.py` (`load_or_ingest()` + engagement
-  snapshots), `tagging.py` (`load_or_tag()`, Claude tagging with model/prompt version
-  stored per row, skips already-tagged videos), `model.py` (`fit_or_skip()` black-box
-  RandomForest baseline on log views with a chronological split). Teammates don't use
-  git and work in Colab against the shared Drive folder `DSO 585/Project`, so
-  `scripts/publish_to_drive.sh` rsyncs the repo there (never touches the `.ipynb`).
-  Workflow: commit here, then publish to Drive. No API keys yet; nothing has run on data.
+- **2026-09-28 (night):** First real data pull succeeded. Channels are now given as URLs
+  (`CHANNEL_URLS` in `src/config.py`); `youtube_api.py` resolves `@handle`, `/channel/UC…`,
+  and `/user/…` URLs via `channels.list` filters (`forHandle`, `id`, `forUsername`; legacy
+  `/c/` URLs are unsupported). Output keeps every API field an API key can access,
+  flattened to dotted columns (57 video columns, 42 channel columns) plus
+  `duration_seconds` and `pulled_at`. Scope per channel is a rolling window (`LOOKBACK_DAYS = 365`), not a fixed
+  count. Test pull: MrBeast, MKBHD, Nick DiGiovanni, 315 videos from the past year → `data/raw/channels.csv`, `videos.csv`, `engagement_snapshots.csv`
+  (gitignored). Decision: keep working in this repo for now; migrating to Colab + Drive
+  only if teammates need to run the pull themselves.
+- **2026-09-28 (evening):** Scope trimmed back to data collection only; modeling and LLM
+  tagging are not started and their scaffolds were removed. Colab/Drive publishing dropped;
+  the pipeline runs locally. `src/` is three plain scripts: `config.py` (`CHANNELS` dict
+  name -> channel ID, `DATA_DIR`, key from .env), `youtube_api.py` (channels -> uploads
+  playlist -> video IDs -> metadata/engagement; run it with an `@handle` to print a channel
+  ID), `ingest.py` (writes `videos.csv` + appends `engagement_snapshots.csv`). Storage is
+  CSV; `DATA_DIR` can be pointed at a Google Drive for Desktop folder to share with the team.
 - **2026-09-28 (later):** Agreed a module layout: one script per pipeline stage in
   `src/`, modules exchange CSVs in `data/raw` → `interim` → `processed`. Scaffolded the
   first stage: `src/config.py` (channel list + paths + `.env` loading),
