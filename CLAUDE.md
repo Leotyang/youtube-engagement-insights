@@ -68,6 +68,15 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-09-28 (later):** Agreed a module layout: one script per pipeline stage in
+  `src/`, modules exchange CSVs in `data/raw` → `interim` → `processed`. Scaffolded the
+  first stage: `src/config.py` (channel list + paths + `.env` loading),
+  `src/youtube_api.py` (channels → uploads playlist → video IDs → metadata/engagement
+  via the Data API v3 REST endpoints with `requests`), and `src/ingest.py` (saves
+  `videos.csv` master list and appends per-run `engagement_snapshots.csv` so engagement
+  can be tracked over time). `.env.example` added; API key still pending. New near-term
+  TODOs from the team (Jira board, channel selection, black-box engagement~views model,
+  LLM tagging/embedding research) added to README.
 - **2026-09-28:** Consolidated three separate Claude Code CLI sessions that had been
   running against this same repo folder into this one. Two of the three had drifted
   into session-management housekeeping (relocating a session transcript between

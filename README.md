@@ -105,8 +105,22 @@ This project combines video metadata, engagement metrics, and (where available) 
 
 > Kept up to date as the project progresses — see [CLAUDE.md](CLAUDE.md), which instructs Claude to always sync this list with actual project status.
 
+**Before meeting with Austin**
+- [ ] Set up Jira board
+- [ ] Choose a list of channels/videos for model training (fill `CHANNEL_IDS` in `src/config.py`)
+- [ ] Set up YouTube API — get an API key, put it in `.env`, run `python src/ingest.py` (module and script scaffolded 2026-09-28)
+- [ ] Black-box model: raw engagement metrics ~ views
+- [ ] Explore LLM video tagging & embedding capabilities — research cheap LLM API tokens, build pipeline, decide on cloud data storage
+
+**Phase I deliverables**
 - [ ] Form team roles (business framing, data/context, methods, AI-assisted implementation, verification, stakeholder communication)
-- [ ] Identify and vet data sources (YouTube Data API, audience-demographics mitigation strategy, creator/video sample)
+- [ ] Draft Feasibility & Problem Formulation Brief
+- [ ] Draft Preliminary Business Dollar Value Assessment
+- [ ] Draft Scope of Work and Execution Plan
+- [ ] Week 3 executive buy-in presentation (first draft: `DSO_585_Brief_Deck.pptx`)
+
+**Phase II pipeline**
+- [ ] Identify and vet data sources (audience-demographics mitigation strategy)
 - [ ] Define engagement and virality metrics precisely
 - [ ] Build the trait taxonomy (content, format, hashtags, creator background, theme, industry)
 - [ ] Build LLM-based trait-tagging pipeline on a sample of videos
@@ -115,10 +129,6 @@ This project combines video metadata, engagement metrics, and (where available) 
 - [ ] Build the optimization model (best trait combination per creator)
 - [ ] Design the correlation-to-causal identification strategy
 - [ ] Build the LLM-as-recommender benchmark and compare to the pipeline
-- [ ] Draft Feasibility & Problem Formulation Brief (Phase I)
-- [ ] Draft Preliminary Business Dollar Value Assessment (Phase I)
-- [ ] Draft Scope of Work and Execution Plan (Phase I)
-- [ ] Week 3 executive buy-in presentation
 
 ## Course framing (DSO 585)
 
