@@ -103,14 +103,14 @@ This project combines video metadata, engagement metrics, and (where available) 
 
 ## TODO
 
-> Kept up to date as the project progresses — see [CLAUDE.md](CLAUDE.md), which instructs Claude to always sync this list with actual project status.
+> Kept up to date as the project progresses — see [CLAUDE.md](CLAUDE.md), which instructs Claude to always sync this list with actual project status. Detailed plan for the current stage (trait tagging) is in [TASK.md](TASK.md).
 
 **Before meeting with Austin**
 - [ ] Set up Jira board
 - [ ] Choose a list of channels/videos for model training (add URLs to `CHANNEL_URLS` in `src/config.py`; MrBeast, MKBHD, Nick DiGiovanni pulled as a first test)
 - [x] Set up YouTube API — key in `.env`, `python src/ingest.py` pulls channels → videos → engagement into `data/raw/*.csv` (2026-09-28)
 - [ ] Black-box model: raw engagement metrics ~ views
-- [ ] Explore LLM video tagging & embedding capabilities — research cheap LLM API tokens, build pipeline, decide on data storage
+- [ ] LLM video tagging — pipeline built (`src/tag_videos.py`, Gemini free tier, nightly GitHub Action); needs a Gemini key + the team's trait list to go live. See [TASK.md](TASK.md)
 
 **Phase I deliverables**
 - [ ] Form team roles (business framing, data/context, methods, AI-assisted implementation, verification, stakeholder communication)
@@ -123,7 +123,7 @@ This project combines video metadata, engagement metrics, and (where available) 
 - [ ] Identify and vet data sources (audience-demographics mitigation strategy)
 - [ ] Define engagement and virality metrics precisely
 - [ ] Build the trait taxonomy (content, format, hashtags, creator background, theme, industry)
-- [ ] Build LLM-based trait-tagging pipeline on a sample of videos
+- [ ] Run the trait-tagging pipeline on a sample and spot-check against human tags
 - [ ] Build the engagement model (traits → views/likes/comments)
 - [ ] Build the audience preference/segment model
 - [ ] Build the optimization model (best trait combination per creator)

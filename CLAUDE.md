@@ -68,6 +68,25 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-09-29 (night):** First live Gemini run succeeded: 4 videos scored on the placeholder
+  traits, scores look sensible (MKBHD reviews → product_review 3, high_production 3). Found
+  the real free-tier constraint: `gemini-3.8-flash` is capped at **20 requests/day**, far
+  tighter than the 8h-of-video rule → ~16 nightly runs for the 315-video baseline. Options
+  in TASK.md (check other models' limits in AI Studio, or ~$10 paid). Fix: tagger now batches up to 10 videos / 2h per request (API allows 10 YouTube URLs per
+  request; video blocks named by ID, response schema keyed by ID), so the 8h/day video rule
+  is binding again. Retries 503/429 with backoff. 7 videos tagged so far.
+- **2026-09-29 (later):** Tagging pipeline scaffolded on the free tier: `src/traits.py`
+  (placeholder traits + universal 0-4 scale), `src/tag_videos.py` (Gemini
+  `interactions.create` with the YouTube URL as a video block and a JSON response schema;
+  resumable, budget- and 429-aware), `.github/workflows/tag_videos.yml` (nightly ingest +
+  tag + commit CSVs). Decision: data CSVs are now tracked in git so the Actions runner has
+  storage. Untested against the live API — `GEMINI_API_KEY` not yet created. Setup steps in
+  TASK.md → "To activate".
+- **2026-09-29:** Ingestion branch `leotyang/youtube_ingestion` pushed. Next stage is trait
+  tagging; plan, engine decision (Gemini API with direct YouTube URLs), universal 0–4 trait
+  scale, content-cache decision (thumbnails yes, transcripts deferred), scheduling advice,
+  and the team's open TODOs are written up in [TASK.md](TASK.md). Team is drafting the
+  channel list and trait definitions; tagging pipeline not started.
 - **2026-09-28 (night):** First real data pull succeeded. Channels are now given as URLs
   (`CHANNEL_URLS` in `src/config.py`); `youtube_api.py` resolves `@handle`, `/channel/UC…`,
   and `/user/…` URLs via `channels.list` filters (`forHandle`, `id`, `forUsername`; legacy
