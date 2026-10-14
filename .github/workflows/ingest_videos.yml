@@ -7,6 +7,8 @@ on:
   schedule:
     - cron: "0 9 * * *"   # 09:00 UTC daily = 02:00 PT (free-tier quota resets at midnight PT)
   workflow_dispatch:
+  push:   # TEMPORARY: lets us test from this branch; remove before merging to main
+    branches: [leotyang/pipeline]
 
 permissions:
   contents: read
