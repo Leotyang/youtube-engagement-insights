@@ -1,6 +1,6 @@
 """Trait definitions and the universal 0-4 scale every trait is scored on.
 
-PLACEHOLDER traits until the team's list lands (see TASK.md). Replace the TRAITS dict,
+PLACEHOLDER traits until the team's list lands (see TODO.md). Replace the TRAITS dict,
 bump TAGGING_PROMPT_VERSION in config.py, and re-run tag_videos.py.
 """
 

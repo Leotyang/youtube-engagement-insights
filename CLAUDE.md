@@ -12,7 +12,7 @@ living memory across sessions — future sessions (yours or a teammate's) should
 able to read this file and understand where the project actually stands, not where it
 stood at the start.
 
-**Always keep the [README.md](README.md) TODO list in sync with actual project
+**Always keep the [TODO.md](TODO.md) task list in sync with actual project
 status.** Whenever a task in that list is started, finished, or a new task is
 identified, update the TODO list in the same change — check off `[x]` completed
 items, add new items as they come up, and remove/rewrite items that are no longer
@@ -68,11 +68,19 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-10-14:** Ingest now reads the creator list from the team Google Sheet (native Sheet,
+  tab `Channel Selection`, via service account / ADC) and loads BigQuery (`dso-585-project-16336`,
+  dataset `youtube`, tables `channels` replace, `videos` upsert on id, `engagement_snapshots`
+  append). `python src/ingest.py --env local` also writes CSV backups; `--env github` is
+  BigQuery-only. Dots in column names become underscores in BigQuery. Offline-tested only
+  (mocked client); first live run pending. Tagger still reads CSVs, so it is next to migrate.
+  Trait proposal (78 traits in 5 categories) in `trait_proposal.tsv`; modeling plan is to
+  tag every video on every trait and let elastic-net regularization select.
 - **2026-09-29 (night):** First live Gemini run succeeded: 4 videos scored on the placeholder
   traits, scores look sensible (MKBHD reviews → product_review 3, high_production 3). Found
   the real free-tier constraint: `gemini-3.8-flash` is capped at **20 requests/day**, far
   tighter than the 8h-of-video rule → ~16 nightly runs for the 315-video baseline. Options
-  in TASK.md (check other models' limits in AI Studio, or ~$10 paid). Fix: tagger now batches up to 10 videos / 2h per request (API allows 10 YouTube URLs per
+  in TODO.md (check other models' limits in AI Studio, or ~$10 paid). Fix: tagger now batches up to 10 videos / 2h per request (API allows 10 YouTube URLs per
   request; video blocks named by ID, response schema keyed by ID), so the 8h/day video rule
   is binding again. Retries 503/429 with backoff. 7 videos tagged so far.
 - **2026-09-29 (later):** Tagging pipeline scaffolded on the free tier: `src/traits.py`
@@ -81,11 +89,11 @@ short; this is a running log, not a report.
   resumable, budget- and 429-aware), `.github/workflows/tag_videos.yml` (nightly ingest +
   tag + commit CSVs). Decision: data CSVs are now tracked in git so the Actions runner has
   storage. Untested against the live API — `GEMINI_API_KEY` not yet created. Setup steps in
-  TASK.md → "To activate".
+  TODO.md → "To activate".
 - **2026-09-29:** Ingestion branch `leotyang/youtube_ingestion` pushed. Next stage is trait
   tagging; plan, engine decision (Gemini API with direct YouTube URLs), universal 0–4 trait
   scale, content-cache decision (thumbnails yes, transcripts deferred), scheduling advice,
-  and the team's open TODOs are written up in [TASK.md](TASK.md). Team is drafting the
+  and the team's open TODOs are written up in [TODO.md](TODO.md). Team is drafting the
   channel list and trait definitions; tagging pipeline not started.
 - **2026-09-28 (night):** First real data pull succeeded. Channels are now given as URLs
   (`CHANNEL_URLS` in `src/config.py`); `youtube_api.py` resolves `@handle`, `/channel/UC…`,

@@ -1,4 +1,4 @@
-# TASK.md — Trait Tagging: Plan and Open Items
+# TODO.md — Task List, Trait Tagging Plan and Open Items
 
 Working notes for the next stage after YouTube ingestion. See [README.md](README.md) for
 the project overview and [CLAUDE.md](CLAUDE.md) for the status log.
@@ -6,6 +6,42 @@ the project overview and [CLAUDE.md](CLAUDE.md) for the status log.
 Last updated: 2026-09-29 (tagging scaffold built)
 
 ---
+
+## Task list
+
+Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
+
+**Before meeting with Austin**
+- [ ] Set up Jira board
+- [ ] Choose a list of channels/videos for model training (add URLs to `CHANNEL_URLS` in `src/config.py`; MrBeast, MKBHD, Nick DiGiovanni pulled as a first test)
+- [x] Set up YouTube API — key in `.env`, `python src/ingest.py` pulls channels → videos → engagement into `data/raw/*.csv` (2026-09-28)
+- [ ] Black-box model: raw engagement metrics ~ views
+- [ ] LLM video tagging — pipeline built (`src/tag_videos.py`, Gemini free tier, nightly GitHub Action); needs a Gemini key + the team's trait list to go live. See the sections below
+
+**Next up (added 2026-10-13)**
+- [ ] Add more traits / categorize traits
+- [ ] Research & figure out a way to pressure test the 0-4 scale
+- [x] Ingest writes channels/videos/engagement_snapshots to BigQuery from the Google Sheet creator list (code done 2026-10-14; first live local run + GitHub secrets pending)
+- [ ] Start backfilling our BigQuery instance with tagged traits (migrate `tag_videos.py` to read/write BigQuery)
+- [ ] Do some EDAs of our list of creators and their videos
+
+**Phase I deliverables**
+- [ ] Form team roles (business framing, data/context, methods, AI-assisted implementation, verification, stakeholder communication)
+- [ ] Draft Feasibility & Problem Formulation Brief
+- [ ] Draft Preliminary Business Dollar Value Assessment
+- [ ] Draft Scope of Work and Execution Plan
+- [ ] Week 3 executive buy-in presentation (first draft: `DSO_585_Brief_Deck.pptx`)
+
+**Phase II pipeline**
+- [ ] Identify and vet data sources (audience-demographics mitigation strategy)
+- [ ] Define engagement and virality metrics precisely
+- [ ] Build the trait taxonomy (content, format, hashtags, creator background, theme, industry)
+- [ ] Run the trait-tagging pipeline on a sample and spot-check against human tags
+- [ ] Build the engagement model (traits → views/likes/comments)
+- [ ] Build the audience preference/segment model
+- [ ] Build the optimization model (best trait combination per creator)
+- [ ] Design the correlation-to-causal identification strategy
+- [ ] Build the LLM-as-recommender benchmark and compare to the pipeline
 
 ## Where we are
 
