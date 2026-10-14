@@ -2,3 +2,6 @@ pandas
 google-api-python-client
 google-genai
 python-dotenv
+google-cloud-bigquery
+pyarrow
+google-auth

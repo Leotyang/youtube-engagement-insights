@@ -9,14 +9,15 @@ load_dotenv()
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Any of: youtube.com/@handle, youtube.com/channel/UC..., youtube.com/user/name.
-# Legacy youtube.com/c/name URLs are not resolvable by the API; use the @handle instead.
-CHANNEL_URLS = [
-    'https://www.youtube.com/@MrBeast',
-    'https://www.youtube.com/@mkbhd',
-    'https://www.youtube.com/@NickDiGiovanni'
-    
-]
+# The creator list lives in the team Google Sheet (tab SHEET_TAB, columns Channel Name / URL /
+# Genre / Size); the sheet must be shared with the service account. See src/sheet.py.
+SHEET_ID = "1Kj8agduMgsqmKxH6e_7Bhzcbthilx9GxStnHAIUX3Ew"
+SHEET_TAB = "Channel Selection"
+
+# BigQuery destination for ingest.py; tables channels, videos, engagement_snapshots.
+GCP_PROJECT_ID = "dso-585-project-16336"
+BQ_DATASET = "youtube"
+BQ_LOCATION = "US"
 
 # Only videos published within this window are pulled (uploads are paged newest-first
 # and paging stops at the cutoff). A channel posting daily costs ~15 quota units per run.
