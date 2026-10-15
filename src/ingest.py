@@ -64,7 +64,8 @@ if args.env == "local":
 
 df_videos = pd.concat(df_video_batches, ignore_index=True)
 if df_videos.empty:
-    sys.exit("No new videos to add. channels refreshed.")
+    print("No new videos to add; channels refreshed.")
+    sys.exit(0)
 df_videos["pulled_at"] = pulled_at
 df_videos["age_days_at_pull"] = (now - pd.to_datetime(df_videos["snippet.publishedAt"], utc=True)).dt.total_seconds() / 86400
 df_snapshot = df_videos[
