@@ -57,13 +57,14 @@ TAGGING_LOCATION = "global"
 MAX_VIDEO_SECONDS = 30 * 60
 MAX_VIDEOS_PER_CHANNEL = 50
 
-# Request sizing. 3 videos per request tested fine (2026-10-15); one 97-min request was rejected,
-# so total video time per request is capped too.
-MAX_VIDEOS_PER_REQUEST = 3
+# Request sizing. One video per request: on 2026-10-15 half of the 3-video requests failed on GitHub (504
+# deadline / 429) and fell back to one video at a time, making a run ~3x slower than single requests
+# (74 videos/h vs ~10-29x real time per single request). A single video's request is what reliably succeeds.
+MAX_VIDEOS_PER_REQUEST = 1
 MAX_SECONDS_PER_REQUEST = 45 * 60
-# Requests in flight at once. Each waits ~0.5-2 min on Gemini, so 3 at a time is ~3x faster;
-# more raises the odds of 429 "resource exhausted" from Google's shared capacity.
-PARALLEL_REQUESTS = 3
+# Requests in flight at once. Each waits ~0.5-2 min on Gemini, so 8 at a time is ~8x faster than serial;
+# more raises the odds of 429 "resource exhausted" from Google's shared capacity (retries absorb a few).
+PARALLEL_REQUESTS = 8
 SECONDS_BETWEEN_REQUESTS = 3   # stagger between starting requests
 REQUEST_TIMEOUT_SECONDS = 600  # a request that hangs this long is abandoned (and retried)
 # Stop the run (next run resumes) after this many batches in a row tag nothing.

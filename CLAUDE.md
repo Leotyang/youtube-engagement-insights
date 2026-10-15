@@ -68,6 +68,12 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-10-15 (evening):** First full GitHub tagging run was slow: 294 videos in 4 h (74/h) because
+  about half of the 3-video requests failed (Vertex 504 / 429) and fell back to one video at a time.
+  Cancelled it (nothing lost: results save per request, and the queue skips anything already in
+  `llm_tagged`). Switched to 1 video per request and 8 in parallel: local test tagged 16 videos in 3.2
+  min (~300/h, a few 429s retried fine). ~376+ videos tagged so far of ~1,980. Open question for the
+  professor logged in TODO.md: how to account for each video's different maturity (age at scrape).
 - **2026-10-15 (later):** Tagger rebuilt and live on Vertex AI (Agent Platform) with
   `gemini-3.1-flash-lite` (location `global`, service-account auth; Gemini API key dropped after its
   prepaid credit hit $0). Pilot on the 5 human-tagged videos: flash-lite ~3x cheaper than

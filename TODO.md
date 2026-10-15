@@ -47,6 +47,19 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] Design the correlation-to-causal identification strategy
 - [ ] Build the LLM-as-recommender benchmark and compare to the pipeline
 
+## Questions
+
+Open questions to confirm with the professor. Add new ones here; move an item to the task list or
+the decisions once answered.
+
+- [ ] **Varying maturity of each video's metrics.** Views, likes and comments are lifetime counts
+  taken once, when the video is scraped, so videos are measured at different ages (the backfill spans
+  3-365 days; new videos are scraped at 3+ days old). Raw counts therefore mix "how well the video did"
+  with "how long it has had to accumulate". What is the best way to account for this in the model?
+  Options on the table: age at scrape (`age_days_at_pull`, e.g. log age) as a covariate; a
+  per-channel age-adjusted target (views relative to that channel's videos of similar age); keeping
+  only videos past a maturity cutoff; or re-snapshotting videos over time to estimate growth curves.
+
 ## Where we are
 
 - `python src/ingest.py` pulls every video from the past year for the channels in
