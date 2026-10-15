@@ -21,7 +21,7 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 **Next up (added 2026-10-13)**
 - [ ] Add more traits / categorize traits
 - [ ] Research & figure out a way to pressure test the 0-4 scale
-- [x] Ingest writes channels/videos/engagement_snapshots to BigQuery from the Google Sheet creator list (code done 2026-10-14; first live local run + GitHub secrets pending)
+- [x] Ingest writes channels/videos/engagement_snapshots to BigQuery from the Google Sheet creator list (one row per video, scraped once at 3+ days old, `age_days_at_pull` stored; local run done 2026-10-15; GitHub secrets + first Actions run pending)
 - [ ] Start backfilling our BigQuery instance with tagged traits (migrate `tag_videos.py` to read/write BigQuery)
 - [ ] Do some EDAs of our list of creators and their videos
 

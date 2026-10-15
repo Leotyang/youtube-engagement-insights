@@ -23,6 +23,11 @@ BQ_LOCATION = "US"
 # and paging stops at the cutoff). A channel posting daily costs ~15 quota units per run.
 LOOKBACK_DAYS = 365
 
+# A video is scraped exactly once, the first run after it is this many days old, so its
+# engagement is measured at a similar age (age_days_at_pull records the exact age). Newer
+# videos are skipped until they mature; videos already in BigQuery are never re-scraped.
+MIN_VIDEO_AGE_DAYS = 3
+
 # Where CSVs go. Default is data/raw inside the repo (gitignored). To share with the team,
 # point this at a Google Drive for Desktop folder instead, e.g.
 # DATA_DIR = os.path.expanduser("~/Library/CloudStorage/GoogleDrive-<acct>/My Drive/DSO 585/Project/data")

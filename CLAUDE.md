@@ -68,6 +68,13 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-10-15:** Ingest redesigned to scrape each video exactly once. Public YouTube Data API
+  only has lifetime cumulative counts (windowed metrics need the Analytics API + channel-owner
+  OAuth), so we approximate a fixed window: a video is pulled only once it is `MIN_VIDEO_AGE_DAYS`
+  (=3, `config.py`) old and not already in BigQuery, and `age_days_at_pull` is stored. `videos` and
+  `engagement_snapshots` are both one row per video, joined on `id` (no snapshot history). Existing
+  backfill (pre-redesign) was scraped at ages 1-365 days: control for age in models. Tables and
+  CSVs were dropped and rebuilt with the new logic on 2026-10-15.
 - **2026-10-14:** Ingest now reads the creator list from the team Google Sheet (native Sheet,
   tab `Channel Selection`, via service account / ADC) and loads BigQuery (`dso-585-project-16336`,
   dataset `youtube`, tables `channels` replace, `videos` upsert on id, `engagement_snapshots`

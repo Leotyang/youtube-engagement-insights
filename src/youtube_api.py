@@ -64,9 +64,10 @@ def get_channels(youtube, channel_urls):
     return flatten(items)
 
 
-def get_video_ids(youtube, playlist_id, published_after):
-    """IDs of videos in a playlist (use the channel's uploads playlist) published on/after
-    `published_after` (tz-aware datetime). Pages newest-first and stops at the cutoff."""
+def get_video_ids(youtube, playlist_id, published_after, published_before, known_ids):
+    """IDs of videos in a playlist (use the channel's uploads playlist) published between
+    `published_after` and `published_before` (tz-aware datetimes) that aren't in `known_ids`.
+    Pages newest-first and stops at the cutoff or at the first already-known video."""
     video_ids = []
     page_token = None
     while True:
@@ -74,13 +75,15 @@ def get_video_ids(youtube, playlist_id, published_after):
             part="contentDetails", playlistId=playlist_id, maxResults=50, pageToken=page_token
         ).execute()
         for item in resp.get("items", []):
-            if pd.Timestamp(item["contentDetails"]["videoPublishedAt"]) >= published_after:
-                video_ids.append(item["contentDetails"]["videoId"])
+            video_id = item["contentDetails"]["videoId"]
+            published = pd.Timestamp(item["contentDetails"]["videoPublishedAt"])
+            if video_id in known_ids or published < published_after:
+                return video_ids
+            if published <= published_before:
+                video_ids.append(video_id)
         page_token = resp.get("nextPageToken")
-        oldest_on_page = min(pd.Timestamp(item["contentDetails"]["videoPublishedAt"]) for item in resp["items"])
-        if not page_token or oldest_on_page < published_after:
-            break
-    return video_ids
+        if not page_token:
+            return video_ids
 
 
 def get_videos(youtube, video_ids):

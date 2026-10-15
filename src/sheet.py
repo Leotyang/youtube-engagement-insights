@@ -44,4 +44,5 @@ def get_creators():
             continue
         url = "https://www.youtube.com/" + match.group(1)
         creators.append({"team_name": name, "channel_url": url, "team_genre": genre, "team_size": size})
+    print(f"Sheet: {len(rows) - 1} rows read, {len(creators)} usable channels, {len(rows) - 1 - len(creators)} skipped")
     return pd.DataFrame(creators)

@@ -32,6 +32,15 @@ def get_client():
     return client
 
 
+def get_existing_ids(client, table_name):
+    """Set of video ids already in a table (a set, not a list: membership is checked per playlist item)."""
+    try:
+        rows = client.query(f"SELECT id FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}`").result()
+        return {row.id for row in rows}
+    except NotFound:
+        return set()
+
+
 def write_table(client, table_name, df, mode):
     """mode: 'replace' (overwrite table), 'append', or 'upsert' (delete rows whose `id` is in df, then append)."""
     table_id = f"{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}"
