@@ -1,17 +1,25 @@
-"""Score every video in videos.csv on the traits in traits.py using Gemini, which watches
-the YouTube videos directly (frames + audio) from their public URLs.
+"""Tag videos with content traits using Gemini on Vertex AI (Agent Platform), which watches each
+YouTube video directly (frames + audio) from its public URL.
 
-Videos are sent several per request (see MAX_VIDEOS_PER_REQUEST / MAX_SECONDS_PER_REQUEST);
-each video block is named with its video ID and the JSON response is keyed by those IDs.
+Which videos: rows of BigQuery `videos` no longer than MAX_VIDEO_SECONDS, outside
+TAGGING_SKIP_CHANNELS, among each channel's MAX_VIDEOS_PER_CHANNEL most recent such uploads, and
+not yet in `llm_tagged` under TAGGING_PROMPT_VERSION. The queue runs in rank order (every
+channel's newest video, then every channel's 2nd newest, ...), so a run that stops early still
+leaves a balanced sample. Raising either cap later tags only the newly eligible videos.
 
-Resumable: skips videos already scored under the current TAGGING_PROMPT_VERSION, stops when
-the day's video budget (DAILY_VIDEO_SECONDS) is used up or the API stays rate-limited, and
-appends to data/interim/video_traits.csv after every request.
+Traits come from the team sheet (traits.py). Linear traits are scored 0-4, Binary traits 0/1.
+Results are appended to BigQuery `llm_tagged` every few requests, one row per video, with the
+trait scores as columns plus model, prompt version, and token usage of the request.
 
-Usage:  python src/tag_videos.py            # tag everything remaining (within budget)
-        python src/tag_videos.py 5          # tag at most 5 videos (for a spot check)
+Usage:
+  python src/tag_videos.py --dry-run           queue size, video hours, estimated cost; no API calls
+  python src/tag_videos.py --max-videos 3      small test
+  python src/tag_videos.py                     whole queue (stops at MAX_SPEND_PER_RUN_USD / MAX_RUNTIME_MINUTES)
+  --env local (default) also appends a CSV backup; --env github writes BigQuery only
 """
 
+import argparse
+import hashlib
 import json
 import os
 import sys
@@ -20,24 +28,41 @@ from datetime import datetime, timezone
 
 import pandas as pd
 from google import genai
+from google.cloud import bigquery
+from google.genai import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import (GEMINI_API_KEY, TAGGING_MODEL, TAGGING_PROMPT_VERSION, DAILY_VIDEO_SECONDS,
-                    MAX_VIDEO_SECONDS, MAX_VIDEOS_PER_REQUEST, MAX_SECONDS_PER_REQUEST,
-                    SECONDS_BETWEEN_REQUESTS, VIDEOS_PATH, TRAITS_PATH)
-from traits import TRAITS, SCALE
+from bigquery_io import get_client as get_bq_client, query_rows, set_column_descriptions, write_table
+from config import (GCP_PROJECT_ID, BQ_DATASET, TAGGING_MODEL, TAGGING_LOCATION, TAGGING_PROMPT_VERSION,
+                    MAX_VIDEO_SECONDS, MAX_VIDEOS_PER_CHANNEL, MAX_VIDEOS_PER_REQUEST, MAX_SECONDS_PER_REQUEST,
+                    SECONDS_BETWEEN_REQUESTS, MAX_SPEND_PER_RUN_USD, MAX_RUNTIME_MINUTES, INPUT_PRICE_PER_M,
+                    OUTPUT_PRICE_PER_M, VIDEO_TOKENS_PER_SECOND, PROMPT_TOKENS_PER_REQUEST, OUTPUT_TOKENS_PER_VIDEO,
+                    TAGGING_SKIP_CHANNELS, LLM_TAGGED_PATH)
+from traits import get_traits
 
-if not GEMINI_API_KEY:
-    sys.exit("GEMINI_API_KEY is empty. Get one at https://aistudio.google.com/apikey and add it to .env.")
-if not os.path.exists(VIDEOS_PATH):
-    sys.exit(f"{VIDEOS_PATH} not found. Run python src/ingest.py first.")
+parser = argparse.ArgumentParser()
+parser.add_argument("--env", choices=["local", "github"], default="local")
+parser.add_argument("--max-videos", type=int, default=None, help="tag at most this many videos this run")
+parser.add_argument("--dry-run", action="store_true", help="print the queue and cost estimate, call nothing")
+args = parser.parse_args()
 
-max_videos = int(sys.argv[1]) if len(sys.argv) > 1 else None
+LINEAR_SCALE = """Score every [0-4] trait on this universal scale. Read "X" as the trait being scored.
+0 - Absent. Nothing in the video is X. A viewer would not associate the video with X.
+1 - Incidental. The creator did not intend X, but some part of the video has X value implicitly.
+2 - Explicit segment. The video as a whole is not X, but at least one part is deliberately X and signaled as such.
+3 - Featured. X is one of the video's stated purposes; a substantial dedicated portion is X, but the video also does other things.
+4 - Defining. The video is X and nothing else. Remove X and there is no video left.
+Tie-breakers: intent beats accident (explicit framing -> at least 2); coverage moves you up (segment 2, major portion 3, whole 4); when torn between two levels, pick the lower."""
 
-PROMPT = """You are scoring {n} YouTube videos against a fixed list of content traits. Each video
-block is named with its video ID; score each video independently.
+BINARY_SCALE = ("Binary traits are marked [0/1]: score 1 if the trait is present anywhere in the video, even briefly; "
+                "score 0 if absent. When unsure, score 0.")
 
-{scale}
+PROMPT = """You are scoring {n} YouTube video(s) against a fixed list of content traits. Each video is preceded by a text
+line giving its video ID; score each video independently.
+
+{linear_scale}
+
+{binary_scale}
 
 Traits to score:
 {traits}
@@ -45,117 +70,195 @@ Traits to score:
 Videos:
 {videos}
 
-Watch every video, then return a JSON object with one key per video ID, each holding an
-object with exactly one integer (0-4) per trait key."""
+Watch every video, then return a JSON object with one key per video ID, each holding an object with exactly one integer
+per trait key (0-4 for [0-4] traits, 0 or 1 for [0/1] traits)."""
 
-TRAIT_SCHEMA = {
+traits = get_traits()
+trait_columns = [trait["column"] for trait in traits]
+# Fingerprint of the trait list, so a sheet edit can't silently mix two trait sets under one version.
+traits_hash = hashlib.sha256(json.dumps(traits, sort_keys=True).encode()).hexdigest()[:12]
+trait_lines = "\n".join(
+    f"- {trait['column']} [{'0/1' if trait['scale'] == 'binary' else '0-4'}]: {trait['definition']}" for trait in traits
+)
+trait_schema = {
     "type": "object",
-    "properties": {trait: {"type": "integer", "minimum": 0, "maximum": 4} for trait in TRAITS},
-    "required": list(TRAITS),
+    "properties": {trait["column"]: {"type": "integer", "minimum": 0, "maximum": 1 if trait["scale"] == "binary" else 4} for trait in traits},
+    "required": trait_columns,
 }
+print(f"{len(traits)} traits from the sheet ({sum(trait['scale'] == 'binary' for trait in traits)} binary), "
+      f"prompt {TAGGING_PROMPT_VERSION}, traits hash {traits_hash}")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+bq_client = get_bq_client()
+tagged_table = f"{GCP_PROJECT_ID}.{BQ_DATASET}.llm_tagged"
+version_param = [bigquery.ScalarQueryParameter("version", "STRING", TAGGING_PROMPT_VERSION)]
 
-df_videos = pd.read_csv(VIDEOS_PATH)
-df_done = pd.read_csv(TRAITS_PATH) if os.path.exists(TRAITS_PATH) else pd.DataFrame(columns=["video_id", "prompt_version"])
-already = set(df_done.loc[df_done["prompt_version"] == TAGGING_PROMPT_VERSION, "video_id"])
-df_todo = df_videos[~df_videos["id"].isin(already)].sort_values("snippet.publishedAt", ascending=False)
-if max_videos:
-    df_todo = df_todo.head(max_videos)
-df_todo = df_todo.assign(scored_seconds=df_todo["duration_seconds"].clip(upper=MAX_VIDEO_SECONDS))
-print(f"{len(already)} already tagged under {TAGGING_PROMPT_VERSION}; {len(df_todo)} to do this run")
+hashes_in_table = [row.traits_hash for row in query_rows(
+    bq_client, f"SELECT DISTINCT traits_hash FROM `{tagged_table}` WHERE prompt_version = @version", version_param)]
+if hashes_in_table and traits_hash not in hashes_in_table:
+    sys.exit(f"The trait sheet changed since videos were tagged under {TAGGING_PROMPT_VERSION}. Bump "
+             f"TAGGING_PROMPT_VERSION in config.py to tag under a new version, or revert the sheet edit.")
 
-# Greedy batching: newest first, cut a batch when it hits the count or duration cap.
+queue_rows = query_rows(bq_client, f"""
+    SELECT id, snippet_channelId AS channel_id, snippet_channelTitle AS channel_title, snippet_title AS title,
+           snippet_description AS description, duration_seconds, channel_rank
+    FROM (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY snippet_channelId ORDER BY snippet_publishedAt DESC) AS channel_rank
+      FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.videos`
+      WHERE duration_seconds > 0 AND duration_seconds <= @max_seconds AND snippet_channelId NOT IN UNNEST(@skip)
+    )
+    WHERE channel_rank <= @per_channel
+    ORDER BY channel_rank, channel_id""", [
+    bigquery.ScalarQueryParameter("max_seconds", "FLOAT64", MAX_VIDEO_SECONDS),
+    bigquery.ArrayQueryParameter("skip", "STRING", list(TAGGING_SKIP_CHANNELS)),
+    bigquery.ScalarQueryParameter("per_channel", "INT64", MAX_VIDEOS_PER_CHANNEL),
+])
+if not queue_rows:
+    sys.exit("No eligible videos in BigQuery `videos`. Run python src/ingest.py first.")
+df_queue = pd.DataFrame([dict(row.items()) for row in queue_rows])
+tagged_ids = [row.id for row in query_rows(
+    bq_client, f"SELECT id FROM `{tagged_table}` WHERE prompt_version = @version", version_param)]
+eligible = len(df_queue)
+df_queue = df_queue[~df_queue["id"].isin(tagged_ids)]
+if args.max_videos is not None:
+    df_queue = df_queue.head(args.max_videos)
+
+# Greedy batching in queue order: cut a request at MAX_VIDEOS_PER_REQUEST or MAX_SECONDS_PER_REQUEST.
 batches = []
 current = []
 current_seconds = 0
-for _, video in df_todo.iterrows():
-    if current and (len(current) >= MAX_VIDEOS_PER_REQUEST or current_seconds + video["scored_seconds"] > MAX_SECONDS_PER_REQUEST):
+for _, video in df_queue.iterrows():
+    if current and (len(current) >= MAX_VIDEOS_PER_REQUEST or current_seconds + video["duration_seconds"] > MAX_SECONDS_PER_REQUEST):
         batches.append(current)
         current = []
         current_seconds = 0
     current.append(video)
-    current_seconds += video["scored_seconds"]
+    current_seconds += video["duration_seconds"]
 if current:
     batches.append(current)
 
-os.makedirs(os.path.dirname(TRAITS_PATH), exist_ok=True)
-seconds_used = 0
-tagged = 0
-for batch_number, batch in enumerate(batches, start=1):
-    batch_seconds = sum(video["scored_seconds"] for video in batch)
-    if seconds_used + batch_seconds > DAILY_VIDEO_SECONDS:
-        print(f"Daily video budget reached ({seconds_used / 3600:.1f}h). Re-run tomorrow to continue.")
-        break
 
-    video_blocks = []
-    video_lines = []
-    for video in batch:
-        block = {"type": "video", "uri": f"https://www.youtube.com/watch?v={video['id']}", "name": video["id"]}
-        if video["duration_seconds"] > MAX_VIDEO_SECONDS:
-            block["processing"] = {"type": "static", "start_offset": "0s", "end_offset": f"{MAX_VIDEO_SECONDS}s"}
-        video_blocks.append(block)
-        description = str(video["snippet.description"] if pd.notna(video["snippet.description"]) else "")[:300].replace("\n", " ")
-        video_lines.append(f"- {video['id']}: \"{video['snippet.title']}\" — {description}")
+def estimate_cost(video_seconds, n_videos, n_requests):
+    input_tokens = video_seconds * VIDEO_TOKENS_PER_SECOND + n_requests * PROMPT_TOKENS_PER_REQUEST
+    return input_tokens / 1e6 * INPUT_PRICE_PER_M + n_videos * OUTPUT_TOKENS_PER_VIDEO / 1e6 * OUTPUT_PRICE_PER_M
 
-    prompt = PROMPT.format(
-        n=len(batch),
-        scale=SCALE,
-        traits="\n".join(f"- {trait}: {definition}" for trait, definition in TRAITS.items()),
-        videos="\n".join(video_lines),
+
+queue_seconds = df_queue["duration_seconds"].sum() if len(df_queue) else 0
+print(f"Eligible: {eligible} videos (<= {MAX_VIDEO_SECONDS / 60:.0f} min, top {MAX_VIDEOS_PER_CHANNEL} per channel, "
+      f"{len(TAGGING_SKIP_CHANNELS)} channel(s) skipped); already tagged: {len(tagged_ids)}")
+print(f"This run: {len(df_queue)} videos from {df_queue['channel_id'].nunique() if len(df_queue) else 0} channels, "
+      f"{queue_seconds / 3600:.1f} h of video, {len(batches)} requests, "
+      f"est ${estimate_cost(queue_seconds, len(df_queue), len(batches)):.2f} (cap ${MAX_SPEND_PER_RUN_USD} per run)")
+if args.dry_run or not batches:
+    sys.exit(0)
+
+client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=TAGGING_LOCATION)
+
+
+def call_gemini(videos):
+    """Score a list of videos in one request. Returns (scores_by_id, usage_metadata), or (None, None) on failure."""
+    contents = []
+    for video in videos:
+        contents.append(types.Part.from_text(text=f"Video ID: {video['id']}"))
+        contents.append(types.Part.from_uri(file_uri=f"https://www.youtube.com/watch?v={video['id']}", mime_type="video/mp4"))
+    video_lines = "\n".join(
+        f"- {video['id']}: \"{video['title']}\" - {video['description'][:300] if isinstance(video['description'], str) else ''}".replace("\n", " ")
+        for video in videos
     )
-    response_schema = {
-        "type": "object",
-        "properties": {video["id"]: TRAIT_SCHEMA for video in batch},
-        "required": [video["id"] for video in batch],
-    }
-
-    scores_by_id = None
-    quota_hit = False
-    for attempt in range(3):
+    contents.append(types.Part.from_text(text=PROMPT.format(
+        n=len(videos), linear_scale=LINEAR_SCALE, binary_scale=BINARY_SCALE, traits=trait_lines, videos=video_lines)))
+    schema = {"type": "object", "properties": {video["id"]: trait_schema for video in videos},
+              "required": [video["id"] for video in videos]}
+    for attempt in range(5):
         try:
-            interaction = client.interactions.create(
-                model=TAGGING_MODEL,
-                input=video_blocks + [{"type": "text", "text": prompt}],
-                response_format={"type": "text", "mime_type": "application/json", "schema": response_schema},
+            response = client.models.generate_content(
+                model=TAGGING_MODEL, contents=contents,
+                config=types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=schema),
             )
-            scores_by_id = json.loads(interaction.output_text)
-            break
+            return json.loads(response.text), response.usage_metadata
         except Exception as error:
-            # The interactions client raises its own error classes; the HTTP status is only
-            # reliably present in the message text ("Error code: 429 ..."), so match on that.
-            is_busy = "503" in str(error) or "429" in str(error)
-            if not is_busy:
-                print(f"Batch {batch_number} failed ({type(error).__name__}): {str(error)[:200]}")
-                break
-            if attempt == 2:
-                quota_hit = "429" in str(error)
-                break
-            print(f"API busy/rate-limited ({type(error).__name__}), retrying in {60 * (attempt + 1)}s...")
-            time.sleep(60 * (attempt + 1))
-    if quota_hit:
-        print("Still rate-limited after retries; daily quota is likely used up. Re-run tomorrow to continue.")
+            # The SDK's error classes vary by version; the HTTP status is reliably in the message text.
+            retryable = "429" in str(error) or "500" in str(error) or "503" in str(error)
+            if retryable and attempt < 4:
+                wait = 30 * 2 ** attempt
+                print(f"  API busy/rate-limited, retrying in {wait}s ({str(error)[:80]})")
+                time.sleep(wait)
+                continue
+            print(f"  Request failed ({type(error).__name__}): {str(error)[:200]}")
+            return None, None
+
+
+def flush(rows):
+    """Append rows to BigQuery llm_tagged (and the local CSV backup)."""
+    df_rows = pd.DataFrame(rows)
+    df_rows[trait_columns] = df_rows[trait_columns].astype("Int64")
+    write_table(bq_client, "llm_tagged", df_rows, "append")
+    if args.env == "local":
+        os.makedirs(os.path.dirname(LLM_TAGGED_PATH), exist_ok=True)
+        df_rows.to_csv(LLM_TAGGED_PATH, mode="a", index=False, header=not os.path.exists(LLM_TAGGED_PATH))
+
+
+run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+run_started = time.time()
+spent = 0.0
+tagged = 0
+pending_rows = []
+for batch_number, batch in enumerate(batches, start=1):
+    batch_seconds = sum(video["duration_seconds"] for video in batch)
+    if spent + estimate_cost(batch_seconds, len(batch), 1) > MAX_SPEND_PER_RUN_USD:
+        print(f"Stopping: next request would pass the ${MAX_SPEND_PER_RUN_USD} per-run cap (spent ~${spent:.2f}).")
         break
-    if scores_by_id is None:
-        continue
+    if (time.time() - run_started) / 60 > MAX_RUNTIME_MINUTES:
+        print(f"Stopping: past the {MAX_RUNTIME_MINUTES}-minute runtime limit.")
+        break
+
+    requests = []
+    scores_by_id, usage = call_gemini(batch)
+    if scores_by_id is not None:
+        requests.append((batch, scores_by_id, usage))
+    elif len(batch) > 1:
+        # One unplayable video (removed, private, age-restricted) fails the whole request; isolate it.
+        print("  Retrying this batch one video at a time")
+        for video in batch:
+            single_scores, single_usage = call_gemini([video])
+            if single_scores is not None:
+                requests.append(([video], single_scores, single_usage))
 
     tagged_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = []
-    for video in batch:
-        scores = scores_by_id.get(video["id"])
-        if not scores:
-            print(f"  No scores returned for {video['id']}; it will be retried next run")
-            continue
-        rows.append({"video_id": video["id"], "channel_id": video["snippet.channelId"], "title": video["snippet.title"],
-                     **{f"trait_{trait}": scores.get(trait) for trait in TRAITS},
-                     "model": TAGGING_MODEL, "prompt_version": TAGGING_PROMPT_VERSION,
-                     "scored_seconds": video["scored_seconds"], "tagged_at": tagged_at})
-        print(f"  {video['snippet.channelTitle']} | {video['snippet.title'][:55]} -> {scores}")
-    pd.DataFrame(rows).to_csv(TRAITS_PATH, mode="a", index=False, header=not os.path.exists(TRAITS_PATH))
-
-    seconds_used += batch_seconds
-    tagged += len(rows)
-    print(f"Batch {batch_number}/{len(batches)}: {len(rows)} videos, {batch_seconds / 60:.0f} min of video, 1 request")
+    batch_tagged = 0
+    for request_number, (request_videos, scores, usage) in enumerate(requests, start=1):
+        input_tokens = usage.prompt_token_count or 0
+        output_tokens = (usage.candidates_token_count or 0) + (getattr(usage, "thoughts_token_count", None) or 0)
+        spent += input_tokens / 1e6 * INPUT_PRICE_PER_M + output_tokens / 1e6 * OUTPUT_PRICE_PER_M
+        for video in request_videos:
+            video_scores = scores.get(video["id"])
+            if not video_scores:
+                print(f"  No scores returned for {video['id']}; it stays in the queue for the next run")
+                continue
+            row = {"id": video["id"], "channel_id": video["channel_id"], "prompt_version": TAGGING_PROMPT_VERSION,
+                   "traits_hash": traits_hash, "model": TAGGING_MODEL, "tagged_at": tagged_at,
+                   "video_seconds": video["duration_seconds"], "request_id": f"{run_id}-{batch_number}-{request_number}",
+                   "request_videos": len(request_videos), "request_input_tokens": input_tokens,
+                   "request_output_tokens": output_tokens}
+            for trait in traits:
+                value = video_scores.get(trait["column"])
+                top = 1 if trait["scale"] == "binary" else 4
+                row[trait["column"]] = value if isinstance(value, int) and 0 <= value <= top else None
+            pending_rows.append(row)
+            batch_tagged += 1
+    tagged += batch_tagged
+    print(f"Request {batch_number}/{len(batches)}: {batch_tagged}/{len(batch)} tagged "
+          f"({batch_seconds / 60:.0f} min of video) | spent ~${spent:.2f}")
+    if batch_number % 10 == 0 and pending_rows:
+        flush(pending_rows)
+        pending_rows = []
     time.sleep(SECONDS_BETWEEN_REQUESTS)
 
-print(f"Tagged {tagged} videos ({seconds_used / 3600:.2f}h of video) in {min(batch_number, len(batches)) if batches else 0} request(s) -> {TRAITS_PATH}")
+if pending_rows:
+    flush(pending_rows)
+if tagged:
+    set_column_descriptions(bq_client, "llm_tagged", {
+        trait["column"]: f"{trait['name']} ({trait['category']}; {'0/1' if trait['scale'] == 'binary' else '0-4'}): {trait['definition']}"
+        for trait in traits
+    })
+print(f"Done: tagged {tagged} videos in {(time.time() - run_started) / 60:.1f} min, est ${spent:.2f} "
+      f"at list price -> {tagged_table}")

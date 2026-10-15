@@ -3,7 +3,7 @@
 Working notes for the next stage after YouTube ingestion. See [README.md](README.md) for
 the project overview and [CLAUDE.md](CLAUDE.md) for the status log.
 
-Last updated: 2026-09-29 (tagging scaffold built)
+Last updated: 2026-10-15 (tagger rebuilt on Vertex AI / gemini-3.1-flash-lite)
 
 ---
 
@@ -13,16 +13,20 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 
 **Before meeting with Austin**
 - [ ] Set up Jira board
-- [ ] Choose a list of channels/videos for model training (add URLs to `CHANNEL_URLS` in `src/config.py`; MrBeast, MKBHD, Nick DiGiovanni pulled as a first test)
+- [x] Choose a list of channels for model training (50 channels in the team Google Sheet, tab `Channel Selection`; ingest reads it directly)
 - [x] Set up YouTube API — key in `.env`, `python src/ingest.py` pulls channels → videos → engagement into `data/raw/*.csv` (2026-09-28)
 - [ ] Black-box model: raw engagement metrics ~ views
-- [ ] LLM video tagging — pipeline built (`src/tag_videos.py`, Gemini free tier, nightly GitHub Action); needs a Gemini key + the team's trait list to go live. See the sections below
+- [x] LLM video tagging — `src/tag_videos.py` on Vertex AI (`gemini-3.1-flash-lite`), 79 traits read from the sheet, results in BigQuery `youtube.llm_tagged`; nightly `tag_videos.yml` workflow (2026-10-15)
 
 **Next up (added 2026-10-13)**
-- [ ] Add more traits / categorize traits
+- [x] Add more traits / categorize traits (79 traits in 5 categories, `Scale` column Linear/Binary, in the sheet's `Content Traits` tab)
 - [ ] Research & figure out a way to pressure test the 0-4 scale
 - [x] Ingest writes channels/videos/engagement_snapshots to BigQuery from the Google Sheet creator list (one row per video, scraped once at 3+ days old, `age_days_at_pull` stored; local run done 2026-10-15; GitHub secrets + first Actions run pending)
-- [ ] Start backfilling our BigQuery instance with tagged traits (migrate `tag_videos.py` to read/write BigQuery)
+- [ ] Backfill `llm_tagged` for the first sample: 50 most recent videos per channel, <= 30 min, CNBC skipped (~1,980 videos, ~$21); 3 tagged in the local test
+- [ ] Add GitHub secret `GOOGLE_SERVICE_ACCOUNT_JSON` (+ `YOUTUBE_API_KEY`); check the first push-triggered Actions runs
+- [ ] Remove the TEMPORARY `push:` triggers in both workflows, then merge to `main` so the nightly schedule and "Run workflow" button work
+- [ ] Decide sampling for later batches: most recent X vs evenly spread over the year (prolific channels' 50 newest span only days)
+- [ ] Re-run the human-vs-model comparison once teammates' manual tags are in; convert the 4 Binary traits' human scores (tagged on 0-4) to 0/1 first
 - [ ] Do some EDAs of our list of creators and their videos
 
 **Phase I deliverables**
@@ -36,7 +40,7 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] Identify and vet data sources (audience-demographics mitigation strategy)
 - [ ] Define engagement and virality metrics precisely
 - [ ] Build the trait taxonomy (content, format, hashtags, creator background, theme, industry)
-- [ ] Run the trait-tagging pipeline on a sample and spot-check against human tags
+- [ ] Run the trait-tagging pipeline on a sample and spot-check against human tags (pilot on 5 videos done 2026-10-15: flash-lite 64% exact / 83% presence agreement vs 68% all-zeros baseline; Flash over-flags)
 - [ ] Build the engagement model (traits → views/likes/comments)
 - [ ] Build the audience preference/segment model
 - [ ] Build the optimization model (best trait combination per creator)
@@ -148,31 +152,16 @@ No cloud compute needed. A day's batch (30–40 videos) takes ~20–30 min of wa
 use the free tier for weekly increments by hand. If strictly free, add the GitHub Actions
 workflow next to the tagger.
 
-## Decisions made (2026-09-29)
+## Current tagging setup (2026-10-15; supersedes the 2026-09-29 free-tier plan above)
 
-- [x] Engine: Gemini via the `google-genai` SDK (`client.interactions.create`, model
-  `gemini-3.8-flash`). Key goes in `.env` as `GEMINI_API_KEY` (still to be added).
-- [x] Free tier + nightly GitHub Actions (`.github/workflows/tag_videos.yml`, 09:00 UTC).
-  The run ingests, tags up to 7.5h of video, and commits the CSVs back.
-- [x] Data CSVs (`data/raw/*`, `data/interim/video_traits.csv`) are now tracked in git so
-  the Actions runner has persistent storage and results are reproducible.
-
-## What's built (live-tested 2026-09-29: 4 videos scored, retries on 503/429 added)
-
-- `src/traits.py` — placeholder TRAITS dict + SCALE text. Swap in the team's list, bump
-  `TAGGING_PROMPT_VERSION` in `config.py`.
-- `src/tag_videos.py` — resumable, batched tagger. `python src/tag_videos.py 10` for a spot check.
-  Up to 10 videos / 2h of video per request, each video block named by ID and the JSON
-  response keyed by ID. Videos >30 min are scored on their first 30 min. Retries 503/429
-  with backoff, stops at the daily budget or when still rate-limited.
-- Config knobs: `TAGGING_MODEL`, `TAGGING_PROMPT_VERSION`, `DAILY_VIDEO_SECONDS`,
-  `MAX_VIDEO_SECONDS`, `MAX_VIDEOS_PER_REQUEST`, `MAX_SECONDS_PER_REQUEST`, `SECONDS_BETWEEN_REQUESTS`.
-
-## To activate
-
-1. Create a key at https://aistudio.google.com/apikey → `.env` `GEMINI_API_KEY=...`.
-2. Spot check locally: `python src/tag_videos.py 10`, eyeball the scores.
-3. GitHub → Settings → Secrets and variables → Actions: add `YOUTUBE_API_KEY` and
-   `GEMINI_API_KEY`.
-4. Merge to `main` (scheduled workflows only fire on the default branch), or trigger
-   manually from the Actions tab with "Run workflow" on any branch.
+- Engine: Gemini on Vertex AI / Agent Platform, `gemini-3.1-flash-lite`, location `global`, authenticated
+  with the pipeline service account (role Agent Platform User). No Gemini API key; `$300` GCP credit.
+- Pilot (5 human-tagged videos): flash-lite was ~3x cheaper than `gemini-3.8-flash` and much closer to
+  the human tags (Flash marked 76% of human-zero cells as present). ~91 tokens per video-second;
+  3 videos per request works; one 97-min request was rejected.
+- `src/traits.py` reads the trait list from the sheet; `src/tag_videos.py` reads its queue from
+  BigQuery `videos` and appends to `llm_tagged` (one row per video per `TAGGING_PROMPT_VERSION`).
+- Knobs in `src/config.py`: `MAX_VIDEO_SECONDS` (longer videos never tagged), `MAX_VIDEOS_PER_CHANNEL`,
+  `TAGGING_SKIP_CHANNELS`, `MAX_SPEND_PER_RUN_USD`, `MAX_RUNTIME_MINUTES`, request sizing, cost model.
+- Commands: `python src/tag_videos.py --dry-run` (queue + cost, no calls), `--max-videos N`, no flag = whole
+  queue up to the spend cap. Workflow `Tag videos` runs nightly at 10:00 UTC, one hour after ingest.

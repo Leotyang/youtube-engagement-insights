@@ -1,27 +1,48 @@
-"""Trait definitions and the universal 0-4 scale every trait is scored on.
+"""Trait list for LLM tagging, read from the team Google Sheet (tab TRAITS_TAB).
 
-PLACEHOLDER traits until the team's list lands (see TODO.md). Replace the TRAITS dict,
-bump TAGGING_PROMPT_VERSION in config.py, and re-run tag_videos.py.
+The sheet is the source of truth. Columns are found by header name (Category, Scale, Trait,
+Definition), so inserting a column there doesn't break this. Scale is "Linear" (scored 0-4) or
+"Binary" (scored 0/1). Each trait also gets a snake_case `column`, used as its key in the model's
+JSON answer and as its column in BigQuery youtube.llm_tagged.
 """
 
-# trait name -> one-line definition. A trait is something a video can *be* to a degree.
-TRAITS = {
-    "tutorial": "Step-by-step instruction intended to teach the viewer how to do something.",
-    "humor": "Content played for laughs: jokes, comedic timing, absurdity, bits.",
-    "challenge": "A stated goal, dare, or competition the creator attempts to complete.",
-    "product_review": "Evaluation of a specific product, service, or piece of media.",
-    "storytelling": "A narrative arc with setup, development, and payoff.",
-    "personal_vlog": "Day-in-the-life or behind-the-scenes footage of the creator's own life.",
-    "high_production": "Cinematic camera work, sets, effects, or editing well beyond a talking head.",
-    "sponsored_content": "Paid promotion or brand integration woven into the video.",
-}
+import os
+import re
+import sys
 
-SCALE = """Score every trait on this universal 0-4 scale. Read "X" as the trait being scored.
-0 - Absent. Nothing in the video is X. A viewer would not associate the video with X.
-1 - Incidental. The creator did not intend X, but some part of the video has X value implicitly.
-2 - Explicit segment. The video as a whole is not X, but at least one part is deliberately X and signaled as such.
-3 - Featured. X is one of the video's stated purposes; a substantial dedicated portion is X, but the video also does other things.
-4 - Defining. The video is X and nothing else. Remove X and there is no video left.
-Tie-breakers: intent beats accident (explicit framing -> at least 2); coverage moves you up (segment 2, major portion 3, whole 4); when torn between two levels, pick the lower."""
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import TRAITS_TAB
+from sheet import read_rows
 
-## ask Austin tomorrow
+HEADERS = ["Category", "Scale", "Trait", "Definition"]
+
+
+def get_traits():
+    """List of {name, column, category, scale ('linear'|'binary'), definition}, in sheet order."""
+    rows = read_rows(TRAITS_TAB)
+    header = [cell.strip() for cell in rows[0]]
+    missing = [name for name in HEADERS if name not in header]
+    if missing:
+        sys.exit(f"Sheet tab '{TRAITS_TAB}' is missing column(s) {missing}; found {header}.")
+    position = {name: header.index(name) for name in HEADERS}
+
+    traits = []
+    for row in rows[1:]:
+        cells = [cell.strip() for cell in row] + [""] * (len(header) - len(row))
+        name = cells[position["Trait"]]
+        if not name:
+            continue
+        scale = cells[position["Scale"]].lower()
+        if scale not in ["linear", "binary"]:
+            sys.exit(f"Trait '{name}' has Scale '{cells[position['Scale']]}'; expected Linear or Binary.")
+        if not cells[position["Definition"]]:
+            sys.exit(f"Trait '{name}' has no Definition.")
+        traits.append({"name": name, "column": re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_"),
+                       "category": cells[position["Category"]], "scale": scale,
+                       "definition": cells[position["Definition"]]})
+
+    columns = [trait["column"] for trait in traits]
+    duplicates = [column for index, column in enumerate(columns) if column in columns[:index]]
+    if duplicates:
+        sys.exit(f"Trait names collide after snake_casing: {duplicates}. Rename them in the sheet.")
+    return traits

@@ -68,6 +68,16 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-10-15 (later):** Tagger rebuilt and live on Vertex AI (Agent Platform) with
+  `gemini-3.1-flash-lite` (location `global`, service-account auth; Gemini API key dropped after its
+  prepaid credit hit $0). Pilot on the 5 human-tagged videos: flash-lite ~3x cheaper than
+  gemini-3.8-flash and closer to human tags (64% exact / 83% presence vs Flash 29% / 48%; all-zeros
+  baseline 68%), ~91 tokens per video-second, 3 videos per request OK. Traits (79, Linear 0-4 / Binary
+  0/1) now come from the sheet via `src/traits.py`; results append to BigQuery `youtube.llm_tagged`
+  (one row per video per prompt version, trait columns described in the schema). Queue: videos <= 30
+  min, 50 most recent per channel, CNBC skipped (`TAGGING_SKIP_CHANNELS`): ~1,980 videos, ~$21. New
+  workflow `tag_videos.yml` (nightly 10:00 UTC + temporary push trigger tagging 3 videos). Local test
+  tagged 3 videos.
 - **2026-10-15:** Ingest redesigned to scrape each video exactly once. Public YouTube Data API
   only has lifetime cumulative counts (windowed metrics need the Analytics API + channel-owner
   OAuth), so we approximate a fixed window: a video is pulled only once it is `MIN_VIDEO_AGE_DAYS`

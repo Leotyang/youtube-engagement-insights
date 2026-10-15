@@ -1,4 +1,4 @@
-"""Constants: channel list, output paths, API key."""
+"""Constants: sheet + BigQuery locations, ingest window, trait-tagging knobs, API key."""
 
 import os
 
@@ -7,12 +7,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# The creator list lives in the team Google Sheet (tab SHEET_TAB, columns Channel Name / URL /
-# Genre / Size); the sheet must be shared with the service account. See src/sheet.py.
+# The team Google Sheet holds the creator list (tab SHEET_TAB: Channel Name / URL / Genre / Size)
+# and the trait list (tab TRAITS_TAB: Category / Scale / Trait / Definition). It must be shared
+# with the service account. See src/sheet.py and src/traits.py.
 SHEET_ID = "1Kj8agduMgsqmKxH6e_7Bhzcbthilx9GxStnHAIUX3Ew"
 SHEET_TAB = "Channel Selection"
+TRAITS_TAB = "Content Traits"
 
 # BigQuery destination for ingest.py; tables channels, videos, engagement_snapshots.
 GCP_PROJECT_ID = "dso-585-project-16336"
@@ -35,17 +36,44 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 VIDEOS_PATH = os.path.join(DATA_DIR, "videos.csv")
 SNAPSHOTS_PATH = os.path.join(DATA_DIR, "engagement_snapshots.csv")
 CHANNELS_PATH = os.path.join(DATA_DIR, "channels.csv")
-TRAITS_PATH = os.path.join(os.path.dirname(DATA_DIR), "interim", "video_traits.csv")
+LLM_TAGGED_PATH = os.path.join(os.path.dirname(DATA_DIR), "interim", "llm_tagged.csv")
 
-# --- Trait tagging (Gemini, watches the YouTube video directly) ---
-TAGGING_MODEL = "gemini-3.8-flash"
-TAGGING_PROMPT_VERSION = "v1"   # bump when traits.py or the prompt changes; rows are keyed on it
-# Free tier allows 8 hours of YouTube video per day; stop the run at 7.5h to leave margin.
-DAILY_VIDEO_SECONDS = 7.5 * 3600
-# Videos longer than this are scored on their first MAX_VIDEO_SECONDS only (caps tokens).
+# Channels to leave out of trait tagging (ingest still pulls them, e.g. for EDA). Keyed by
+# YouTube channel id -> why; their traits wouldn't be something a creator can act on.
+TAGGING_SKIP_CHANNELS = {
+    "UCrp_UI8XtuYfpiqluWLD7Lw": "CNBC Television - news (11.8k videos/yr)",
+}
+
+# --- Trait tagging (Gemini on Vertex AI / Agent Platform; it watches the YouTube video directly) ---
+# Auth is the same service account (needs the Agent Platform User role); no API key.
+# gemini-3.1-flash-lite won the 2026-10-15 pilot: ~3x cheaper than gemini-3.8-flash and much
+# closer to the team's manual tags. The 3.x models are only served from the "global" location.
+TAGGING_MODEL = "gemini-3.1-flash-lite"
+TAGGING_LOCATION = "global"
+# Bump when the prompt or the sheet's trait list changes. Rows in llm_tagged are keyed on it,
+# and tag_videos.py refuses to run if the sheet changed under the current version.
+TAGGING_PROMPT_VERSION = "v2"
+
+# Which videos get tagged. Videos longer than MAX_VIDEO_SECONDS are not tagged at all; of the
+# rest, each channel's MAX_VIDEOS_PER_CHANNEL most recent are. Raising either later tags only the
+# newly eligible videos (anything already tagged under this version is skipped).
 MAX_VIDEO_SECONDS = 30 * 60
-# Several videos go in one request (API allows 10). Batch is capped by total video time to
-# stay well inside the 1M-token context (~100 tokens per second of video).
-MAX_VIDEOS_PER_REQUEST = 10
-MAX_SECONDS_PER_REQUEST = 2 * 3600
-SECONDS_BETWEEN_REQUESTS = 4
+MAX_VIDEOS_PER_CHANNEL = 50
+
+# Request sizing. 3 videos per request tested fine (2026-10-15); one 97-min request was rejected,
+# so total video time per request is capped too.
+MAX_VIDEOS_PER_REQUEST = 3
+MAX_SECONDS_PER_REQUEST = 45 * 60
+SECONDS_BETWEEN_REQUESTS = 3
+
+# Run guards: stop before the estimated spend or wall time passes these (GitHub jobs die at 6h).
+MAX_SPEND_PER_RUN_USD = 25
+MAX_RUNTIME_MINUTES = 300
+
+# Cost model. Prices are list $/1M tokens from Google's Gemini API pricing page (2026-10-15);
+# Vertex billing may differ. Token rates were measured in the pilot.
+INPUT_PRICE_PER_M = 0.25
+OUTPUT_PRICE_PER_M = 1.50
+VIDEO_TOKENS_PER_SECOND = 91
+PROMPT_TOKENS_PER_REQUEST = 4000
+OUTPUT_TOKENS_PER_VIDEO = 800

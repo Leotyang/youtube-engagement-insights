@@ -1,11 +1,11 @@
 # Nightly: read the creator Google Sheet, pull channels/videos/engagement from YouTube, and
-# load BigQuery. Gemini tagging is not wired in yet (tag_videos.py still reads CSVs).
+# load BigQuery. Trait tagging is the separate "Tag videos" workflow, an hour later.
 # Runs on the default branch only (GitHub cron rule). Trigger manually via "Run workflow".
 name: Ingest videos
 
 on:
   schedule:
-    - cron: "0 9 * * *"   # 09:00 UTC daily = 02:00 PT (free-tier quota resets at midnight PT)
+    - cron: "0 9 * * *"   # 09:00 UTC daily = 02:00 PT (YouTube API quota resets at midnight PT)
   workflow_dispatch:
   push:   # TEMPORARY: lets us test from this branch; remove before merging to main
     branches: [leotyang/pipeline]

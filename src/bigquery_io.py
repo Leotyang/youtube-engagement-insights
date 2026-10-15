@@ -41,6 +41,24 @@ def get_existing_ids(client, table_name):
         return set()
 
 
+def query_rows(client, sql, params=None):
+    """Rows of a query as a list, or [] when a table it reads doesn't exist yet."""
+    try:
+        return list(client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params or [])).result())
+    except NotFound:
+        return []
+
+
+def set_column_descriptions(client, table_name, descriptions):
+    """Set BigQuery column descriptions from a {column: text} dict; other columns keep theirs."""
+    table = client.get_table(f"{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}")
+    table.schema = [
+        bigquery.SchemaField(field.name, field.field_type, mode=field.mode, description=descriptions.get(field.name, field.description))
+        for field in table.schema
+    ]
+    client.update_table(table, ["schema"])
+
+
 def write_table(client, table_name, df, mode):
     """mode: 'replace' (overwrite table), 'append', or 'upsert' (delete rows whose `id` is in df, then append)."""
     table_id = f"{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}"
