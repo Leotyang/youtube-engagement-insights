@@ -18,7 +18,7 @@ on:
         description: "Only print the queue and cost estimate"
         type: boolean
         default: false
-  push:   # TEMPORARY: tags 3 videos (~$0.03) per push to test from this branch; remove before merging to main
+  push:   # TEMPORARY: each push runs the full queue (up to the per-run spend/runtime caps); remove before merging to main
     branches: [leotyang/pipeline]
 
 permissions:
@@ -52,12 +52,10 @@ jobs:
 
       - name: Tag videos with Gemini
         env:
-          EVENT: ${{ github.event_name }}
           MAX_VIDEOS: ${{ inputs.max_videos }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           ARGS="--env github"
-          if [ "$EVENT" = "push" ]; then ARGS="$ARGS --max-videos 3"; fi
           if [ -n "$MAX_VIDEOS" ]; then ARGS="$ARGS --max-videos $MAX_VIDEOS"; fi
           if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           python src/tag_videos.py $ARGS
