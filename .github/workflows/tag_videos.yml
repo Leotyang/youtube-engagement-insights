@@ -33,6 +33,8 @@ jobs:
   tag:
     runs-on: ubuntu-latest
     timeout-minutes: 330
+    env:
+      PYTHONUNBUFFERED: "1"   # print progress to the Actions log live, not when the job ends
     steps:
       - uses: actions/checkout@v4
 

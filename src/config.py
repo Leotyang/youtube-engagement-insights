@@ -61,7 +61,13 @@ MAX_VIDEOS_PER_CHANNEL = 50
 # so total video time per request is capped too.
 MAX_VIDEOS_PER_REQUEST = 3
 MAX_SECONDS_PER_REQUEST = 45 * 60
-SECONDS_BETWEEN_REQUESTS = 3
+# Requests in flight at once. Each waits ~0.5-2 min on Gemini, so 3 at a time is ~3x faster;
+# more raises the odds of 429 "resource exhausted" from Google's shared capacity.
+PARALLEL_REQUESTS = 3
+SECONDS_BETWEEN_REQUESTS = 3   # stagger between starting requests
+REQUEST_TIMEOUT_SECONDS = 600  # a request that hangs this long is abandoned (and retried)
+# Stop the run (next run resumes) after this many batches in a row tag nothing.
+MAX_CONSECUTIVE_FAILED_BATCHES = 3
 
 # Run guards: stop before the estimated spend or wall time passes these (GitHub jobs die at 6h).
 MAX_SPEND_PER_RUN_USD = 25

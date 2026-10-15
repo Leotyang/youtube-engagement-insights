@@ -11,6 +11,10 @@ Traits come from the team sheet (traits.py). Linear traits are scored 0-4, Binar
 Results are appended to BigQuery `llm_tagged` after every request, one row per video, with the
 trait scores as columns plus model, a fingerprint of the trait list, and token usage of the request.
 
+Requests run PARALLEL_REQUESTS at a time. A run stops early (the next run resumes) when it nears
+MAX_SPEND_PER_RUN_USD or MAX_RUNTIME_MINUTES, or after MAX_CONSECUTIVE_FAILED_BATCHES batches in
+a row tag nothing (usually Gemini capacity errors that outlast the retries).
+
 Usage:
   python src/tag_videos.py --dry-run           queue size, video hours, estimated cost; no API calls
   python src/tag_videos.py --max-videos 3      small test
@@ -24,6 +28,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -35,7 +40,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bigquery_io import get_client as get_bq_client, query_rows, set_column_descriptions, write_table
 from config import (GCP_PROJECT_ID, BQ_DATASET, TAGGING_MODEL, TAGGING_LOCATION,
                     MAX_VIDEO_SECONDS, MAX_VIDEOS_PER_CHANNEL, MAX_VIDEOS_PER_REQUEST, MAX_SECONDS_PER_REQUEST,
-                    SECONDS_BETWEEN_REQUESTS, MAX_SPEND_PER_RUN_USD, MAX_RUNTIME_MINUTES, INPUT_PRICE_PER_M,
+                    SECONDS_BETWEEN_REQUESTS, PARALLEL_REQUESTS, REQUEST_TIMEOUT_SECONDS, MAX_CONSECUTIVE_FAILED_BATCHES,
+                    MAX_SPEND_PER_RUN_USD, MAX_RUNTIME_MINUTES, INPUT_PRICE_PER_M,
                     OUTPUT_PRICE_PER_M, VIDEO_TOKENS_PER_SECOND, PROMPT_TOKENS_PER_REQUEST, OUTPUT_TOKENS_PER_VIDEO,
                     TAGGING_SKIP_CHANNELS, LLM_TAGGED_PATH)
 from traits import get_traits
@@ -148,7 +154,14 @@ print(f"This run: {len(df_queue)} videos from {df_queue['channel_id'].nunique() 
 if args.dry_run or not batches:
     sys.exit(0)
 
-client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=TAGGING_LOCATION)
+# Each request gets REQUEST_TIMEOUT_SECONDS; a hung call raises instead of blocking the run forever.
+client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=TAGGING_LOCATION,
+                      http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_SECONDS * 1000))
+run_started = time.time()
+
+
+def minutes_left():
+    return MAX_RUNTIME_MINUTES - (time.time() - run_started) / 60
 
 
 def call_gemini(videos):
@@ -165,6 +178,8 @@ def call_gemini(videos):
         n=len(videos), linear_scale=LINEAR_SCALE, binary_scale=BINARY_SCALE, traits=trait_lines, videos=video_lines)))
     schema = {"type": "object", "properties": {video["id"]: trait_schema for video in videos},
               "required": [video["id"] for video in videos]}
+    if minutes_left() < REQUEST_TIMEOUT_SECONDS / 60:
+        return None, None
     for attempt in range(5):
         try:
             response = client.models.generate_content(
@@ -173,15 +188,33 @@ def call_gemini(videos):
             )
             return json.loads(response.text), response.usage_metadata
         except Exception as error:
-            # The SDK's error classes vary by version; the HTTP status is reliably in the message text.
-            retryable = "429" in str(error) or "500" in str(error) or "503" in str(error)
-            if retryable and attempt < 4:
-                wait = 30 * 2 ** attempt
-                print(f"  API busy/rate-limited, retrying in {wait}s ({str(error)[:80]})")
-                time.sleep(wait)
+            # The SDK's error classes vary by version; the HTTP status (or "timed out") is reliably in the message.
+            message = str(error)
+            retryable = ("429" in message or "500" in message or "503" in message or "504" in message
+                         or "timed out" in message.lower())
+            backoff = 30 * 2 ** attempt
+            if retryable and attempt < 4 and minutes_left() > backoff / 60 + REQUEST_TIMEOUT_SECONDS / 60:
+                print(f"  {videos[0]['id']}...: busy/rate-limited/timeout, retrying in {backoff}s ({message[:80]})")
+                time.sleep(backoff)
                 continue
-            print(f"  Request failed ({type(error).__name__}): {str(error)[:200]}")
+            print(f"  {videos[0]['id']}...: request failed ({type(error).__name__}): {message[:200]}")
             return None, None
+
+
+def tag_batch(batch):
+    """Worker for one batch. Returns a list of (videos, scores_by_id, usage) for the requests that succeeded."""
+    scores_by_id, usage = call_gemini(batch)
+    if scores_by_id is not None:
+        return [(batch, scores_by_id, usage)]
+    requests = []
+    if len(batch) > 1:
+        # One unplayable video (removed, private, age-restricted) fails the whole request; isolate it.
+        print(f"  Retrying a failed batch one video at a time ({', '.join(video['id'] for video in batch)})")
+        for video in batch:
+            single_scores, single_usage = call_gemini([video])
+            if single_scores is not None:
+                requests.append(([video], single_scores, single_usage))
+    return requests
 
 
 def save_rows(rows):
@@ -195,58 +228,69 @@ def save_rows(rows):
 
 
 run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-run_started = time.time()
 spent = 0.0
 tagged = 0
-for batch_number, batch in enumerate(batches, start=1):
-    batch_seconds = sum(video["duration_seconds"] for video in batch)
-    if spent + estimate_cost(batch_seconds, len(batch), 1) > MAX_SPEND_PER_RUN_USD:
-        print(f"Stopping: next request would pass the ${MAX_SPEND_PER_RUN_USD} per-run cap (spent ~${spent:.2f}).")
-        break
-    if (time.time() - run_started) / 60 > MAX_RUNTIME_MINUTES:
-        print(f"Stopping: past the {MAX_RUNTIME_MINUTES}-minute runtime limit.")
-        break
+finished = 0
+consecutive_failures = 0
+stop_reason = None
+next_batch = 0
+# Up to PARALLEL_REQUESTS batches are in flight in worker threads; this main thread hands out batches,
+# and saves each one's results to BigQuery as soon as it finishes (all writes happen here, not in workers).
+running = {}
+with ThreadPoolExecutor(max_workers=PARALLEL_REQUESTS) as pool:
+    while running or (stop_reason is None and next_batch < len(batches)):
+        while stop_reason is None and next_batch < len(batches) and len(running) < PARALLEL_REQUESTS:
+            batch = batches[next_batch]
+            batch_seconds = sum(video["duration_seconds"] for video in batch)
+            in_flight = sum(estimate_cost(seconds, len(videos), 1) for _, videos, seconds in running.values())
+            if spent + in_flight + estimate_cost(batch_seconds, len(batch), 1) > MAX_SPEND_PER_RUN_USD:
+                stop_reason = f"the next request would pass the ${MAX_SPEND_PER_RUN_USD} per-run spend cap"
+                break
+            if minutes_left() < REQUEST_TIMEOUT_SECONDS / 60:
+                stop_reason = f"near the {MAX_RUNTIME_MINUTES}-minute runtime limit"
+                break
+            next_batch += 1
+            running[pool.submit(tag_batch, batch)] = (next_batch, batch, batch_seconds)
+            time.sleep(SECONDS_BETWEEN_REQUESTS)
 
-    requests = []
-    scores_by_id, usage = call_gemini(batch)
-    if scores_by_id is not None:
-        requests.append((batch, scores_by_id, usage))
-    elif len(batch) > 1:
-        # One unplayable video (removed, private, age-restricted) fails the whole request; isolate it.
-        print("  Retrying this batch one video at a time")
-        for video in batch:
-            single_scores, single_usage = call_gemini([video])
-            if single_scores is not None:
-                requests.append(([video], single_scores, single_usage))
+        done, _ = wait(list(running), return_when=FIRST_COMPLETED)
+        for future in done:
+            batch_number, batch, batch_seconds = running.pop(future)
+            tagged_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            batch_rows = []
+            for request_number, (request_videos, scores, usage) in enumerate(future.result(), start=1):
+                input_tokens = usage.prompt_token_count or 0
+                output_tokens = (usage.candidates_token_count or 0) + (getattr(usage, "thoughts_token_count", None) or 0)
+                spent += input_tokens / 1e6 * INPUT_PRICE_PER_M + output_tokens / 1e6 * OUTPUT_PRICE_PER_M
+                for video in request_videos:
+                    video_scores = scores.get(video["id"])
+                    if not video_scores:
+                        print(f"  No scores returned for {video['id']}; it stays in the queue for the next run")
+                        continue
+                    row = {"id": video["id"], "channel_id": video["channel_id"], "traits_hash": traits_hash,
+                           "model": TAGGING_MODEL, "tagged_at": tagged_at, "video_seconds": video["duration_seconds"],
+                           "request_id": f"{run_id}-{batch_number}-{request_number}", "request_videos": len(request_videos),
+                           "request_input_tokens": input_tokens, "request_output_tokens": output_tokens}
+                    for trait in traits:
+                        value = video_scores.get(trait["column"])
+                        top = 1 if trait["scale"] == "binary" else 4
+                        row[trait["column"]] = value if isinstance(value, int) and 0 <= value <= top else None
+                    batch_rows.append(row)
+            # Save every batch's results right away, so a killed run loses nothing that finished.
+            if batch_rows:
+                save_rows(batch_rows)
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+            tagged += len(batch_rows)
+            finished += 1
+            print(f"Batch {batch_number}/{len(batches)} ({finished} done): {len(batch_rows)}/{len(batch)} tagged "
+                  f"({batch_seconds / 60:.0f} min of video) | total {tagged} | spent ~${spent:.2f} | {minutes_left():.0f} min left")
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILED_BATCHES and stop_reason is None:
+                stop_reason = f"{consecutive_failures} batches in a row tagged nothing (Gemini likely overloaded)"
 
-    tagged_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    batch_rows = []
-    for request_number, (request_videos, scores, usage) in enumerate(requests, start=1):
-        input_tokens = usage.prompt_token_count or 0
-        output_tokens = (usage.candidates_token_count or 0) + (getattr(usage, "thoughts_token_count", None) or 0)
-        spent += input_tokens / 1e6 * INPUT_PRICE_PER_M + output_tokens / 1e6 * OUTPUT_PRICE_PER_M
-        for video in request_videos:
-            video_scores = scores.get(video["id"])
-            if not video_scores:
-                print(f"  No scores returned for {video['id']}; it stays in the queue for the next run")
-                continue
-            row = {"id": video["id"], "channel_id": video["channel_id"], "traits_hash": traits_hash, "model": TAGGING_MODEL, "tagged_at": tagged_at,
-                   "video_seconds": video["duration_seconds"], "request_id": f"{run_id}-{batch_number}-{request_number}",
-                   "request_videos": len(request_videos), "request_input_tokens": input_tokens,
-                   "request_output_tokens": output_tokens}
-            for trait in traits:
-                value = video_scores.get(trait["column"])
-                top = 1 if trait["scale"] == "binary" else 4
-                row[trait["column"]] = value if isinstance(value, int) and 0 <= value <= top else None
-            batch_rows.append(row)
-    # Save every request's results right away, so a killed run loses nothing that finished.
-    if batch_rows:
-        save_rows(batch_rows)
-    tagged += len(batch_rows)
-    print(f"Request {batch_number}/{len(batches)}: {len(batch_rows)}/{len(batch)} tagged "
-          f"({batch_seconds / 60:.0f} min of video) | spent ~${spent:.2f}")
-    time.sleep(SECONDS_BETWEEN_REQUESTS)
-
+if stop_reason:
+    print(f"Stopped early: {stop_reason}. The next run picks up the remaining queue.")
 if tagged:
     set_column_descriptions(bq_client, "llm_tagged", {
         trait["column"]: f"{trait['name']} ({trait['category']}; {'0/1' if trait['scale'] == 'binary' else '0-4'}): {trait['definition']}"
