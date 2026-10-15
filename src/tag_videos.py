@@ -8,8 +8,10 @@ channel's newest video, then every channel's 2nd newest, ...), so a run that sto
 leaves a balanced sample. Raising either cap later tags only the newly eligible videos.
 
 Traits come from the team sheet (traits.py). Linear traits are scored 0-4, Binary traits 0/1.
-Results are appended to BigQuery `llm_tagged` after every request, one row per video, with the
-trait scores as columns plus model, a fingerprint of the trait list, and token usage of the request.
+Results are appended to BigQuery `llm_tagged`, one row per video, with the trait scores as columns plus
+model, a fingerprint of the trait list, and token usage of the request. Rows are written in small groups
+(every SAVE_EVERY_ROWS videos or SAVE_EVERY_SECONDS, whichever comes first, and when the run ends or is
+cancelled), which keeps the number of BigQuery load jobs per day well under its limit.
 
 Requests run PARALLEL_REQUESTS at a time. A run stops early (the next run resumes) when it nears
 MAX_SPEND_PER_RUN_USD or MAX_RUNTIME_MINUTES, or after MAX_CONSECUTIVE_FAILED_BATCHES batches in
@@ -26,6 +28,8 @@ import argparse
 import hashlib
 import json
 import os
+import random
+import re
 import sys
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -41,6 +45,7 @@ from bigquery_io import get_client as get_bq_client, query_rows, set_column_desc
 from config import (GCP_PROJECT_ID, BQ_DATASET, TAGGING_MODEL, TAGGING_LOCATION,
                     MAX_VIDEO_SECONDS, MAX_VIDEOS_PER_CHANNEL, MAX_VIDEOS_PER_REQUEST, MAX_SECONDS_PER_REQUEST,
                     SECONDS_BETWEEN_REQUESTS, PARALLEL_REQUESTS, REQUEST_TIMEOUT_SECONDS, MAX_CONSECUTIVE_FAILED_BATCHES,
+                    MAX_REQUEST_ATTEMPTS, RETRY_BASE_SECONDS, SAVE_EVERY_ROWS, SAVE_EVERY_SECONDS,
                     MAX_SPEND_PER_RUN_USD, MAX_RUNTIME_MINUTES, INPUT_PRICE_PER_M,
                     OUTPUT_PRICE_PER_M, VIDEO_TOKENS_PER_SECOND, PROMPT_TOKENS_PER_REQUEST, OUTPUT_TOKENS_PER_VIDEO,
                     TAGGING_SKIP_CHANNELS, LLM_TAGGED_PATH)
@@ -164,6 +169,17 @@ def minutes_left():
     return MAX_RUNTIME_MINUTES - (time.time() - run_started) / 60
 
 
+RETRYABLE_ERROR_TYPES = ["RemoteProtocolError", "ConnectError", "ConnectTimeout", "ReadError", "ReadTimeout", "WriteError", "PoolTimeout"]
+
+
+def is_retryable(error):
+    """Capacity/rate errors (429, 500, 503, 504), timeouts, and dropped connections are worth retrying.
+    The SDK's error classes vary by version, so the HTTP status is matched in the message text."""
+    message = str(error).lower()
+    return (type(error).__name__ in RETRYABLE_ERROR_TYPES or re.search(r"\b(429|500|503|504)\b", message) is not None
+            or "timed out" in message or "disconnected" in message or "connection reset" in message)
+
+
 def call_gemini(videos):
     """Score a list of videos in one request. Returns (scores_by_id, usage_metadata), or (None, None) on failure."""
     contents = []
@@ -180,7 +196,7 @@ def call_gemini(videos):
               "required": [video["id"] for video in videos]}
     if minutes_left() < REQUEST_TIMEOUT_SECONDS / 60:
         return None, None
-    for attempt in range(5):
+    for attempt in range(MAX_REQUEST_ATTEMPTS):
         try:
             response = client.models.generate_content(
                 model=TAGGING_MODEL, contents=contents,
@@ -188,14 +204,12 @@ def call_gemini(videos):
             )
             return json.loads(response.text), response.usage_metadata
         except Exception as error:
-            # The SDK's error classes vary by version; the HTTP status (or "timed out") is reliably in the message.
             message = str(error)
-            retryable = ("429" in message or "500" in message or "503" in message or "504" in message
-                         or "timed out" in message.lower())
-            backoff = 30 * 2 ** attempt
-            if retryable and attempt < 4 and minutes_left() > backoff / 60 + REQUEST_TIMEOUT_SECONDS / 60:
-                print(f"  {videos[0]['id']}...: busy/rate-limited/timeout, retrying in {backoff}s ({message[:80]})")
-                time.sleep(backoff)
+            # Jitter keeps the parallel workers from retrying in lockstep against the same capacity limit.
+            wait_seconds = RETRY_BASE_SECONDS * 2 ** attempt * random.uniform(0.5, 1.5)
+            if is_retryable(error) and attempt < MAX_REQUEST_ATTEMPTS - 1 and minutes_left() > wait_seconds / 60 + REQUEST_TIMEOUT_SECONDS / 60:
+                print(f"  {videos[0]['id']}...: busy/rate-limited/timeout, retrying in {wait_seconds:.0f}s ({type(error).__name__}: {message[:70]})")
+                time.sleep(wait_seconds)
                 continue
             print(f"  {videos[0]['id']}...: request failed ({type(error).__name__}): {message[:200]}")
             return None, None
@@ -227,6 +241,26 @@ def save_rows(rows):
         df_rows.to_csv(LLM_TAGGED_PATH, mode="a", index=False, header=not os.path.exists(LLM_TAGGED_PATH))
 
 
+buffer = {"rows": [], "last_save": time.time()}
+
+
+def save_pending(force=False):
+    """Write buffered rows once there are SAVE_EVERY_ROWS of them, SAVE_EVERY_SECONDS have passed, or force is set.
+    A failed write keeps the rows buffered for the next attempt."""
+    waited = time.time() - buffer["last_save"]
+    if not buffer["rows"] or not (force or len(buffer["rows"]) >= SAVE_EVERY_ROWS or waited >= SAVE_EVERY_SECONDS):
+        return
+    for attempt in range(3):
+        try:
+            save_rows(buffer["rows"])
+            buffer["rows"] = []
+            break
+        except Exception as error:
+            print(f"  BigQuery save failed ({type(error).__name__}): {str(error)[:150]}; {len(buffer['rows'])} rows stay buffered")
+            time.sleep(5 * (attempt + 1))
+    buffer["last_save"] = time.time()
+
+
 run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 spent = 0.0
 tagged = 0
@@ -235,60 +269,66 @@ consecutive_failures = 0
 stop_reason = None
 next_batch = 0
 # Up to PARALLEL_REQUESTS batches are in flight in worker threads; this main thread hands out batches,
-# and saves each one's results to BigQuery as soon as it finishes (all writes happen here, not in workers).
+# and buffers each one's results for BigQuery (all writes happen here, not in workers).
 running = {}
 with ThreadPoolExecutor(max_workers=PARALLEL_REQUESTS) as pool:
-    while running or (stop_reason is None and next_batch < len(batches)):
-        while stop_reason is None and next_batch < len(batches) and len(running) < PARALLEL_REQUESTS:
-            batch = batches[next_batch]
-            batch_seconds = sum(video["duration_seconds"] for video in batch)
-            in_flight = sum(estimate_cost(seconds, len(videos), 1) for _, videos, seconds in running.values())
-            if spent + in_flight + estimate_cost(batch_seconds, len(batch), 1) > MAX_SPEND_PER_RUN_USD:
-                stop_reason = f"the next request would pass the ${MAX_SPEND_PER_RUN_USD} per-run spend cap"
-                break
-            if minutes_left() < REQUEST_TIMEOUT_SECONDS / 60:
-                stop_reason = f"near the {MAX_RUNTIME_MINUTES}-minute runtime limit"
-                break
-            next_batch += 1
-            running[pool.submit(tag_batch, batch)] = (next_batch, batch, batch_seconds)
-            time.sleep(SECONDS_BETWEEN_REQUESTS)
+    try:
+        while running or (stop_reason is None and next_batch < len(batches)):
+            while stop_reason is None and next_batch < len(batches) and len(running) < PARALLEL_REQUESTS:
+                batch = batches[next_batch]
+                batch_seconds = sum(video["duration_seconds"] for video in batch)
+                in_flight = sum(estimate_cost(seconds, len(videos), 1) for _, videos, seconds in running.values())
+                if spent + in_flight + estimate_cost(batch_seconds, len(batch), 1) > MAX_SPEND_PER_RUN_USD:
+                    stop_reason = f"the next request would pass the ${MAX_SPEND_PER_RUN_USD} per-run spend cap"
+                    break
+                if minutes_left() < REQUEST_TIMEOUT_SECONDS / 60:
+                    stop_reason = f"near the {MAX_RUNTIME_MINUTES}-minute runtime limit"
+                    break
+                next_batch += 1
+                running[pool.submit(tag_batch, batch)] = (next_batch, batch, batch_seconds)
+                time.sleep(SECONDS_BETWEEN_REQUESTS)
 
-        done, _ = wait(list(running), return_when=FIRST_COMPLETED)
-        for future in done:
-            batch_number, batch, batch_seconds = running.pop(future)
-            tagged_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            batch_rows = []
-            for request_number, (request_videos, scores, usage) in enumerate(future.result(), start=1):
-                input_tokens = usage.prompt_token_count or 0
-                output_tokens = (usage.candidates_token_count or 0) + (getattr(usage, "thoughts_token_count", None) or 0)
-                spent += input_tokens / 1e6 * INPUT_PRICE_PER_M + output_tokens / 1e6 * OUTPUT_PRICE_PER_M
-                for video in request_videos:
-                    video_scores = scores.get(video["id"])
-                    if not video_scores:
-                        print(f"  No scores returned for {video['id']}; it stays in the queue for the next run")
-                        continue
-                    row = {"id": video["id"], "channel_id": video["channel_id"], "traits_hash": traits_hash,
-                           "model": TAGGING_MODEL, "tagged_at": tagged_at, "video_seconds": video["duration_seconds"],
-                           "request_id": f"{run_id}-{batch_number}-{request_number}", "request_videos": len(request_videos),
-                           "request_input_tokens": input_tokens, "request_output_tokens": output_tokens}
-                    for trait in traits:
-                        value = video_scores.get(trait["column"])
-                        top = 1 if trait["scale"] == "binary" else 4
-                        row[trait["column"]] = value if isinstance(value, int) and 0 <= value <= top else None
-                    batch_rows.append(row)
-            # Save every batch's results right away, so a killed run loses nothing that finished.
-            if batch_rows:
-                save_rows(batch_rows)
-                consecutive_failures = 0
-            else:
-                consecutive_failures += 1
-            tagged += len(batch_rows)
-            finished += 1
-            print(f"Batch {batch_number}/{len(batches)} ({finished} done): {len(batch_rows)}/{len(batch)} tagged "
-                  f"({batch_seconds / 60:.0f} min of video) | total {tagged} | spent ~${spent:.2f} | {minutes_left():.0f} min left")
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILED_BATCHES and stop_reason is None:
-                stop_reason = f"{consecutive_failures} batches in a row tagged nothing (Gemini likely overloaded)"
+            done, _ = wait(list(running), return_when=FIRST_COMPLETED)
+            for future in done:
+                batch_number, batch, batch_seconds = running.pop(future)
+                tagged_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                batch_rows = []
+                for request_number, (request_videos, scores, usage) in enumerate(future.result(), start=1):
+                    input_tokens = usage.prompt_token_count or 0
+                    output_tokens = (usage.candidates_token_count or 0) + (getattr(usage, "thoughts_token_count", None) or 0)
+                    spent += input_tokens / 1e6 * INPUT_PRICE_PER_M + output_tokens / 1e6 * OUTPUT_PRICE_PER_M
+                    for video in request_videos:
+                        video_scores = scores.get(video["id"])
+                        if not video_scores:
+                            print(f"  No scores returned for {video['id']}; it stays in the queue for the next run")
+                            continue
+                        row = {"id": video["id"], "channel_id": video["channel_id"], "traits_hash": traits_hash,
+                               "model": TAGGING_MODEL, "tagged_at": tagged_at, "video_seconds": video["duration_seconds"],
+                               "request_id": f"{run_id}-{batch_number}-{request_number}", "request_videos": len(request_videos),
+                               "request_input_tokens": input_tokens, "request_output_tokens": output_tokens}
+                        for trait in traits:
+                            value = video_scores.get(trait["column"])
+                            top = 1 if trait["scale"] == "binary" else 4
+                            row[trait["column"]] = value if isinstance(value, int) and 0 <= value <= top else None
+                        batch_rows.append(row)
+                if batch_rows:
+                    buffer["rows"] += batch_rows
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                tagged += len(batch_rows)
+                finished += 1
+                print(f"Batch {batch_number}/{len(batches)} ({finished} done): {len(batch_rows)}/{len(batch)} tagged "
+                      f"({batch_seconds / 60:.0f} min of video) | total {tagged} | spent ~${spent:.2f} | {minutes_left():.0f} min left")
+                save_pending()
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILED_BATCHES and stop_reason is None:
+                    stop_reason = f"{consecutive_failures} batches in a row tagged nothing (Gemini likely overloaded)"
+    finally:
+        # Also runs when the job is cancelled (Ctrl+C / GitHub's cancel signal), so finished work isn't lost.
+        save_pending(force=True)
 
+if buffer["rows"]:
+    sys.exit(f"Could not write {len(buffer['rows'])} tagged rows to BigQuery; they are lost. Those videos stay in the queue.")
 if stop_reason:
     print(f"Stopped early: {stop_reason}. The next run picks up the remaining queue.")
 if tagged:

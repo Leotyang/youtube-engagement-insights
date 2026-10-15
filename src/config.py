@@ -62,11 +62,18 @@ MAX_VIDEOS_PER_CHANNEL = 50
 # (74 videos/h vs ~10-29x real time per single request). A single video's request is what reliably succeeds.
 MAX_VIDEOS_PER_REQUEST = 1
 MAX_SECONDS_PER_REQUEST = 45 * 60
-# Requests in flight at once. Each waits ~0.5-2 min on Gemini, so 8 at a time is ~8x faster than serial;
-# more raises the odds of 429 "resource exhausted" from Google's shared capacity (retries absorb a few).
-PARALLEL_REQUESTS = 8
+# Requests in flight at once. Each waits ~0.5-2 min on Gemini; more in flight is faster but raises the odds of
+# 429 "resource exhausted" from Google's shared capacity (8 on 2026-10-15 got a lot of them, 3 was too slow).
+PARALLEL_REQUESTS = 5
 SECONDS_BETWEEN_REQUESTS = 3   # stagger between starting requests
 REQUEST_TIMEOUT_SECONDS = 600  # a request that hangs this long is abandoned (and retried)
+# Retries for 429/5xx/timeouts/dropped connections: waits of ~10, 20, 40, 80 s (each randomized +-50%) between attempts.
+MAX_REQUEST_ATTEMPTS = 5
+RETRY_BASE_SECONDS = 10
+# Results are written to BigQuery in groups: every SAVE_EVERY_ROWS videos or SAVE_EVERY_SECONDS, whichever is first.
+# One write per video would run into BigQuery's daily limit on load jobs per table (about 1,500).
+SAVE_EVERY_ROWS = 10
+SAVE_EVERY_SECONDS = 120
 # Stop the run (next run resumes) after this many batches in a row tag nothing.
 MAX_CONSECUTIVE_FAILED_BATCHES = 3
 

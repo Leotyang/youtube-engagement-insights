@@ -11,6 +11,7 @@ doesn't flip INT64 -> FLOAT64); otherwise inferred from the DataFrame.
 import os
 import re
 import sys
+import warnings
 
 import pandas as pd
 from google.api_core.exceptions import NotFound
@@ -18,6 +19,9 @@ from google.cloud import bigquery
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import GCP_PROJECT_ID, BQ_DATASET, BQ_LOCATION
+
+# Loading a DataFrame works without pandas-gbq today; the library only warns that a future version will want it.
+warnings.filterwarnings("ignore", message="Loading pandas DataFrame into BigQuery will require pandas-gbq")
 
 # publishedAt, actualStartTime, recordingDate, pulled_at ... all arrive as ISO strings.
 TIMESTAMP_NAME = re.compile(r"(At|Time|Date)$|_at$")

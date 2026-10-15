@@ -24,7 +24,7 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [x] Ingest writes channels/videos/engagement_snapshots to BigQuery from the Google Sheet creator list (one row per video, scraped once at 3+ days old, `age_days_at_pull` stored; local run done 2026-10-15; GitHub secrets + first Actions run pending)
 - [ ] Backfill `llm_tagged` for the first sample: 50 most recent videos per channel, <= 30 min, CNBC skipped (~1,980 videos, ~$21); 3 tagged in the local test
 - [ ] Add GitHub secret `GOOGLE_SERVICE_ACCOUNT_JSON` (+ `YOUTUBE_API_KEY`); check the first push-triggered Actions runs
-- [ ] Remove the TEMPORARY `push:` triggers in both workflows, then merge to `main` so the nightly schedule and "Run workflow" button work
+- [ ] Remove the TEMPORARY `push:` trigger in `tag_videos.yml` (the one in `ingest_videos.yml` is already gone), then merge to `main` so the nightly schedule and "Run workflow" button work
 - [ ] Decide sampling for later batches: most recent X vs evenly spread over the year (prolific channels' 50 newest span only days)
 - [ ] Re-run the human-vs-model comparison once teammates' manual tags are in; convert the 4 Binary traits' human scores (tagged on 0-4) to 0/1 first
 - [ ] Do some EDAs of our list of creators and their videos

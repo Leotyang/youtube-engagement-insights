@@ -68,6 +68,12 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-10-15 (night):** The 8-parallel GitHub run still hit many 429s (Google's shared capacity, not our
+  quota; synchronized 30-240 s backoffs idled the workers) and one unretried `RemoteProtocolError`.
+  Fixes: retry connection errors, jittered 10-80 s backoff (5 attempts), 5 parallel requests, BigQuery
+  writes buffered every 10 videos / 2 min (one write per video would hit the ~1,500 load jobs per table per
+  day limit; a cancelled run flushes on exit), pandas-gbq warning silenced. Removed the temporary push
+  trigger from `ingest_videos.yml`; the one in `tag_videos.yml` stays until the backfill finishes.
 - **2026-10-15 (evening):** First full GitHub tagging run was slow: 294 videos in 4 h (74/h) because
   about half of the 3-video requests failed (Vertex 504 / 429) and fell back to one video at a time.
   Cancelled it (nothing lost: results save per request, and the queue skips anything already in
