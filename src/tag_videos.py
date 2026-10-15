@@ -8,7 +8,7 @@ channel's newest video, then every channel's 2nd newest, ...), so a run that sto
 leaves a balanced sample. Raising either cap later tags only the newly eligible videos.
 
 Traits come from the team sheet (traits.py). Linear traits are scored 0-4, Binary traits 0/1.
-Results are appended to BigQuery `llm_tagged` every few requests, one row per video, with the
+Results are appended to BigQuery `llm_tagged` after every request, one row per video, with the
 trait scores as columns plus model, a fingerprint of the trait list, and token usage of the request.
 
 Usage:
@@ -184,7 +184,7 @@ def call_gemini(videos):
             return None, None
 
 
-def flush(rows):
+def save_rows(rows):
     """Append rows to BigQuery llm_tagged (and the local CSV backup)."""
     df_rows = pd.DataFrame(rows)
     df_rows[trait_columns] = df_rows[trait_columns].astype("Int64")
@@ -198,7 +198,6 @@ run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 run_started = time.time()
 spent = 0.0
 tagged = 0
-pending_rows = []
 for batch_number, batch in enumerate(batches, start=1):
     batch_seconds = sum(video["duration_seconds"] for video in batch)
     if spent + estimate_cost(batch_seconds, len(batch), 1) > MAX_SPEND_PER_RUN_USD:
@@ -221,7 +220,7 @@ for batch_number, batch in enumerate(batches, start=1):
                 requests.append(([video], single_scores, single_usage))
 
     tagged_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    batch_tagged = 0
+    batch_rows = []
     for request_number, (request_videos, scores, usage) in enumerate(requests, start=1):
         input_tokens = usage.prompt_token_count or 0
         output_tokens = (usage.candidates_token_count or 0) + (getattr(usage, "thoughts_token_count", None) or 0)
@@ -239,18 +238,15 @@ for batch_number, batch in enumerate(batches, start=1):
                 value = video_scores.get(trait["column"])
                 top = 1 if trait["scale"] == "binary" else 4
                 row[trait["column"]] = value if isinstance(value, int) and 0 <= value <= top else None
-            pending_rows.append(row)
-            batch_tagged += 1
-    tagged += batch_tagged
-    print(f"Request {batch_number}/{len(batches)}: {batch_tagged}/{len(batch)} tagged "
+            batch_rows.append(row)
+    # Save every request's results right away, so a killed run loses nothing that finished.
+    if batch_rows:
+        save_rows(batch_rows)
+    tagged += len(batch_rows)
+    print(f"Request {batch_number}/{len(batches)}: {len(batch_rows)}/{len(batch)} tagged "
           f"({batch_seconds / 60:.0f} min of video) | spent ~${spent:.2f}")
-    if batch_number % 10 == 0 and pending_rows:
-        flush(pending_rows)
-        pending_rows = []
     time.sleep(SECONDS_BETWEEN_REQUESTS)
 
-if pending_rows:
-    flush(pending_rows)
 if tagged:
     set_column_descriptions(bq_client, "llm_tagged", {
         trait["column"]: f"{trait['name']} ({trait['category']}; {'0/1' if trait['scale'] == 'binary' else '0-4'}): {trait['definition']}"
