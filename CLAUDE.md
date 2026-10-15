@@ -74,7 +74,8 @@ short; this is a running log, not a report.
   gemini-3.8-flash and closer to human tags (64% exact / 83% presence vs Flash 29% / 48%; all-zeros
   baseline 68%), ~91 tokens per video-second, 3 videos per request OK. Traits (79, Linear 0-4 / Binary
   0/1) now come from the sheet via `src/traits.py`; results append to BigQuery `youtube.llm_tagged`
-  (one row per video per prompt version, trait columns described in the schema). Queue: videos <= 30
+  (one row per video, trait columns described in the schema; no prompt versioning, a `traits_hash`
+  check blocks tagging if the sheet's trait list changes). Queue: videos <= 30
   min, 50 most recent per channel, CNBC skipped (`TAGGING_SKIP_CHANNELS`): ~1,980 videos, ~$21. New
   workflow `tag_videos.yml` (nightly 10:00 UTC + temporary push trigger tagging 3 videos). Local test
   tagged 3 videos.

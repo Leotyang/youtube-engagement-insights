@@ -160,7 +160,8 @@ workflow next to the tagger.
   the human tags (Flash marked 76% of human-zero cells as present). ~91 tokens per video-second;
   3 videos per request works; one 97-min request was rejected.
 - `src/traits.py` reads the trait list from the sheet; `src/tag_videos.py` reads its queue from
-  BigQuery `videos` and appends to `llm_tagged` (one row per video per `TAGGING_PROMPT_VERSION`).
+  BigQuery `videos` and appends to `llm_tagged` (one row per video; a sheet change to the trait list
+  is blocked by a `traits_hash` check until the sheet is reverted or the table cleared).
 - Knobs in `src/config.py`: `MAX_VIDEO_SECONDS` (longer videos never tagged), `MAX_VIDEOS_PER_CHANNEL`,
   `TAGGING_SKIP_CHANNELS`, `MAX_SPEND_PER_RUN_USD`, `MAX_RUNTIME_MINUTES`, request sizing, cost model.
 - Commands: `python src/tag_videos.py --dry-run` (queue + cost, no calls), `--max-videos N`, no flag = whole

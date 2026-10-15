@@ -50,13 +50,10 @@ TAGGING_SKIP_CHANNELS = {
 # closer to the team's manual tags. The 3.x models are only served from the "global" location.
 TAGGING_MODEL = "gemini-3.1-flash-lite"
 TAGGING_LOCATION = "global"
-# Bump when the prompt or the sheet's trait list changes. Rows in llm_tagged are keyed on it,
-# and tag_videos.py refuses to run if the sheet changed under the current version.
-TAGGING_PROMPT_VERSION = "v2"
 
 # Which videos get tagged. Videos longer than MAX_VIDEO_SECONDS are not tagged at all; of the
 # rest, each channel's MAX_VIDEOS_PER_CHANNEL most recent are. Raising either later tags only the
-# newly eligible videos (anything already tagged under this version is skipped).
+# newly eligible videos (anything already in llm_tagged is skipped).
 MAX_VIDEO_SECONDS = 30 * 60
 MAX_VIDEOS_PER_CHANNEL = 50
 

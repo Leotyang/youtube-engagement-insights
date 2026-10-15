@@ -3,13 +3,13 @@ YouTube video directly (frames + audio) from its public URL.
 
 Which videos: rows of BigQuery `videos` no longer than MAX_VIDEO_SECONDS, outside
 TAGGING_SKIP_CHANNELS, among each channel's MAX_VIDEOS_PER_CHANNEL most recent such uploads, and
-not yet in `llm_tagged` under TAGGING_PROMPT_VERSION. The queue runs in rank order (every
+not yet in `llm_tagged`. The queue runs in rank order (every
 channel's newest video, then every channel's 2nd newest, ...), so a run that stops early still
 leaves a balanced sample. Raising either cap later tags only the newly eligible videos.
 
 Traits come from the team sheet (traits.py). Linear traits are scored 0-4, Binary traits 0/1.
 Results are appended to BigQuery `llm_tagged` every few requests, one row per video, with the
-trait scores as columns plus model, prompt version, and token usage of the request.
+trait scores as columns plus model, a fingerprint of the trait list, and token usage of the request.
 
 Usage:
   python src/tag_videos.py --dry-run           queue size, video hours, estimated cost; no API calls
@@ -33,7 +33,7 @@ from google.genai import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bigquery_io import get_client as get_bq_client, query_rows, set_column_descriptions, write_table
-from config import (GCP_PROJECT_ID, BQ_DATASET, TAGGING_MODEL, TAGGING_LOCATION, TAGGING_PROMPT_VERSION,
+from config import (GCP_PROJECT_ID, BQ_DATASET, TAGGING_MODEL, TAGGING_LOCATION,
                     MAX_VIDEO_SECONDS, MAX_VIDEOS_PER_CHANNEL, MAX_VIDEOS_PER_REQUEST, MAX_SECONDS_PER_REQUEST,
                     SECONDS_BETWEEN_REQUESTS, MAX_SPEND_PER_RUN_USD, MAX_RUNTIME_MINUTES, INPUT_PRICE_PER_M,
                     OUTPUT_PRICE_PER_M, VIDEO_TOKENS_PER_SECOND, PROMPT_TOKENS_PER_REQUEST, OUTPUT_TOKENS_PER_VIDEO,
@@ -75,7 +75,7 @@ per trait key (0-4 for [0-4] traits, 0 or 1 for [0/1] traits)."""
 
 traits = get_traits()
 trait_columns = [trait["column"] for trait in traits]
-# Fingerprint of the trait list, so a sheet edit can't silently mix two trait sets under one version.
+# Fingerprint of the trait list, so a sheet edit can't silently mix two trait sets in llm_tagged.
 traits_hash = hashlib.sha256(json.dumps(traits, sort_keys=True).encode()).hexdigest()[:12]
 trait_lines = "\n".join(
     f"- {trait['column']} [{'0/1' if trait['scale'] == 'binary' else '0-4'}]: {trait['definition']}" for trait in traits
@@ -86,17 +86,15 @@ trait_schema = {
     "required": trait_columns,
 }
 print(f"{len(traits)} traits from the sheet ({sum(trait['scale'] == 'binary' for trait in traits)} binary), "
-      f"prompt {TAGGING_PROMPT_VERSION}, traits hash {traits_hash}")
+      f"traits hash {traits_hash}")
 
 bq_client = get_bq_client()
 tagged_table = f"{GCP_PROJECT_ID}.{BQ_DATASET}.llm_tagged"
-version_param = [bigquery.ScalarQueryParameter("version", "STRING", TAGGING_PROMPT_VERSION)]
-
-hashes_in_table = [row.traits_hash for row in query_rows(
-    bq_client, f"SELECT DISTINCT traits_hash FROM `{tagged_table}` WHERE prompt_version = @version", version_param)]
+hashes_in_table = [row.traits_hash for row in query_rows(bq_client, f"SELECT DISTINCT traits_hash FROM `{tagged_table}`")]
 if hashes_in_table and traits_hash not in hashes_in_table:
-    sys.exit(f"The trait sheet changed since videos were tagged under {TAGGING_PROMPT_VERSION}. Bump "
-             f"TAGGING_PROMPT_VERSION in config.py to tag under a new version, or revert the sheet edit.")
+    sys.exit(f"The trait list in the sheet changed since the rows in llm_tagged were tagged (hash {traits_hash}, "
+             f"table has {hashes_in_table}). Tagging now would mix two trait sets. Revert the sheet edit, or "
+             f"clear llm_tagged to re-tag every video with the new list.")
 
 queue_rows = query_rows(bq_client, f"""
     SELECT id, snippet_channelId AS channel_id, snippet_channelTitle AS channel_title, snippet_title AS title,
@@ -115,8 +113,7 @@ queue_rows = query_rows(bq_client, f"""
 if not queue_rows:
     sys.exit("No eligible videos in BigQuery `videos`. Run python src/ingest.py first.")
 df_queue = pd.DataFrame([dict(row.items()) for row in queue_rows])
-tagged_ids = [row.id for row in query_rows(
-    bq_client, f"SELECT id FROM `{tagged_table}` WHERE prompt_version = @version", version_param)]
+tagged_ids = [row.id for row in query_rows(bq_client, f"SELECT id FROM `{tagged_table}`")]
 eligible = len(df_queue)
 df_queue = df_queue[~df_queue["id"].isin(tagged_ids)]
 if args.max_videos is not None:
@@ -234,8 +231,7 @@ for batch_number, batch in enumerate(batches, start=1):
             if not video_scores:
                 print(f"  No scores returned for {video['id']}; it stays in the queue for the next run")
                 continue
-            row = {"id": video["id"], "channel_id": video["channel_id"], "prompt_version": TAGGING_PROMPT_VERSION,
-                   "traits_hash": traits_hash, "model": TAGGING_MODEL, "tagged_at": tagged_at,
+            row = {"id": video["id"], "channel_id": video["channel_id"], "traits_hash": traits_hash, "model": TAGGING_MODEL, "tagged_at": tagged_at,
                    "video_seconds": video["duration_seconds"], "request_id": f"{run_id}-{batch_number}-{request_number}",
                    "request_videos": len(request_videos), "request_input_tokens": input_tokens,
                    "request_output_tokens": output_tokens}
