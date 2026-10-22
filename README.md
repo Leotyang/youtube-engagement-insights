@@ -1,112 +1,205 @@
-# DSO_585_project
+# YouTube Engagement Insight Tool
 
-DSO 585 (Data-Driven Consulting) team project.
+A data pipeline and modeling toolkit for measuring which content traits go with engagement on YouTube.
+Every night it pulls channel and video data for a curated list of creators from the YouTube Data API into
+BigQuery, and an LLM (Gemini on Vertex AI) watches new videos and scores each one on 79 content traits
+(format, tone, production, audience hooks, subject matter). Regularized regression on those scores
+estimates which traits are associated with views and likes. The goal is a per-creator dashboard where a
+creator moves a slider per trait and sees the predicted effect; that part is planned.
 
-**New to this repo? Read [GIT_WORKFLOW.md](GIT_WORKFLOW.md) first** — it explains what Git/GitHub is, how to set up your SSH key, common commands, and how we use branches and pull requests (PRs) on this project. **If you're using Claude (Claude Code) to work on this project, also read [CLAUDE.md](CLAUDE.md)** — it holds the project context Claude needs, and we keep it updated as the project evolves.
+Built for independent creators who don't have an analytics team. It started as a team project for USC's
+DSO 585 (Data-Driven Consulting); background and research questions are in [docs/PROPOSAL.md](docs/PROPOSAL.md).
 
----
+> Results describe associations in observational data, not causal effects.
 
-# Project Proposal: Optimizing Content Traits for Independent Creator Engagement
+<!-- TODO: credits (team members and roles, once teammates confirm they're fine being named) -->
 
-## 1. Business Problem
+## Status
 
-YouTube's recommendation system decides which videos get surfaced to which viewers, but individual creators — especially independent ones without a data/analytics team — have no systematic way to know *which of their content traits* the algorithm and their audience actually reward. Creators mostly rely on intuition, trends, or trial-and-error to decide what to make next, which wastes production effort on videos with low expected engagement and makes it hard to grow a channel predictably.
+Ongoing project. As of 2026-10-22:
 
-The core challenge is translating audience preference (who watches, and what they respond to) into a concrete, actionable set of content traits a creator should incorporate in their next video. A reliable method to do this would give independent creators — who lack in-house data teams — an analytical edge similar to what large media companies already have internally.
+| | |
+|---|---|
+| **Working** | Nightly ingest of channels, videos and daily engagement snapshots into BigQuery (GitHub Actions) |
+| | Nightly LLM tagging of new videos on 79 traits, with spend and runtime caps |
+| | Analysis notebooks: EDA, OLS baseline, Lasso with 5-fold cross-validation, AI-vs-human tag agreement |
+| **In progress** | Normalizing engagement for video age, using the daily snapshots (needs a few weeks of history) |
+| | Updating the notebooks to the current pipeline (pin a snapshot date so results are reproducible) |
+| | Evaluating tag quality through downstream model performance and tag-twice consistency |
+| **Planned** | Sentiment features (TODO: define the source) |
+| | Per-creator dashboard with a slider per trait |
+| | Audience-segment models and a recommender that suggests trait changes for a creator's next video |
 
-**Main question:** How can independent creators (YouTubers) leverage audience preference data to make videos that increase viewership and engagement?
+## How it works
 
-## 2. Research Questions
+```mermaid
+flowchart LR
+    sheet["Google Sheet<br/>creator list + trait list"]
+    yt["YouTube Data API v3"]
+    gemini["Gemini 3.1 Flash-Lite<br/>on Vertex AI"]
+    subgraph gha["GitHub Actions (nightly)"]
+        ingest["src/ingest.py<br/>09:00 UTC"]
+        tag["src/tag_videos.py<br/>10:00 UTC"]
+    end
+    subgraph bq["BigQuery: dataset youtube"]
+        core[("channels<br/>videos")]
+        snaps[("video_daily_snapshots<br/>channel_daily_snapshots")]
+        tagged[("llm_tagged")]
+    end
+    nb["notebooks/<br/>EDA, OLS, Lasso (5-fold CV)"]
+    sent["Sentiment features<br/>(planned)"]
+    dash["Per-creator dashboard<br/>trait sliders (planned)"]
 
-- How do we define **engagement** and **virality**, precisely (e.g., engagement rate vs. raw counts, a growth-rate or view-velocity threshold for "viral")?
-- What are the drivers of the important KPIs (views, likes, comments) — which content traits (topic, format, hashtags, creator background, theme, industry/niche) matter most?
-- What is merely **correlation** between a trait and engagement, and what is **causal**?
-- How do we move from correlation to a causal estimate (e.g., creators who changed format over time, matching on channel/video characteristics, natural experiments around algorithm or platform changes)?
-- How do content traits and **audience demographics/preferences** interact — does the same trait (e.g., video length, format) drive engagement differently depending on who is watching?
-- Given fitted trait effects, how do we **intervene** on a particular upcoming video — i.e., turn model output into a specific, actionable change a creator could make?
-- Can an **LLM directly recommend** the same traits to a creator (without the formal ML + optimization pipeline), and how does that compare in quality to our pipeline?
+    sheet --> ingest
+    yt --> ingest
+    ingest --> core
+    ingest --> snaps
+    sheet --> tag
+    core --> tag
+    tag -- "video URL + trait list" --> gemini
+    gemini -- "79 scores per video" --> tag
+    tag --> tagged
+    core --> nb
+    tagged --> nb
+    nb -.-> dash
+    sent -.-> dash
 
-## 3. Data Description, Sources, and API Strategy
+    classDef planned stroke-dasharray: 5 5
+    class sent,dash planned
+```
 
-This project combines video metadata, engagement metrics, and (where available) audience demographic signals.
+| Stage | Code | What it does |
+|---|---|---|
+| Creator and trait lists | [`src/sheet.py`](src/sheet.py), [`src/traits.py`](src/traits.py) | Read the team [Google Sheet](https://docs.google.com/spreadsheets/d/1TK60Al7OyGIbhZMVXZcjNbQjI0UmEqHp/edit?usp=sharing&ouid=101825006116878587105&rtpof=true&sd=true): which channels to track, and each trait's category, scale (0-4 or 0/1) and definition |
+| Ingest | [`src/ingest.py`](src/ingest.py), [`src/youtube_api.py`](src/youtube_api.py) | For every channel on the sheet: upsert channel and video metadata, add new uploads from the past 365 days, re-fetch every video's counts, and write one snapshot row per video and per channel per day |
+| Storage | [`src/bigquery_io.py`](src/bigquery_io.py) | Typed loads, upserts, and date-partitioned snapshot tables whose daily partition is overwritten, so rerunning a day is safe |
+| Tagging | [`src/tag_videos.py`](src/tag_videos.py) | Gemini watches each video from its public URL and returns one integer per trait, enforced by a JSON schema. Queue: each channel's 50 newest videos of 30 minutes or less, round-robin across channels. Parallel requests with jittered retries; stops before the per-run spend cap |
+| Modeling | [`notebooks/`](notebooks) | One-hot trait encoding plus YouTube metadata and tag features; OLS baseline, then Lasso with the penalty chosen by 5-fold CV on the training split and a held-out 20% test set |
 
-**a. Video metadata and engagement metrics**
-- **Source:** YouTube Data API v3 (`videos.list`, `channels.list`, `search.list` endpoints), via the `google-api-python-client` library.
-- **Description:** Public, per-video data — title, description, tags, duration, publish date, thumbnail, and the `statistics` object (view count, like count, comment count). This is available for any public video/channel without needing to own it.
-- **API strategy:** Curate a list of creators/channels across a few industries/niches, pull their video lists via `search.list` (or `playlistItems.list` on the uploads playlist), then batch-call `videos.list` with `part=snippet,statistics,contentDetails` to get metadata + engagement counts per video. Respect API quota limits (default 10,000 units/day) by batching requests (up to 50 IDs per call).
+## Automated workflows
 
-**b. Audience demographics**
-- **Constraint to flag early:** the YouTube **Analytics** API (which has real demographic breakdowns — age, gender, geography, subscriber status, traffic source) is only accessible for channels you own/have been granted access to via OAuth. We cannot pull true demographic data for arbitrary third-party creators.
-- **Mitigating strategies (pick one or combine):**
-  - Use our own (team members') YouTube channels, if any, as ground-truth demographic data via the Analytics API.
-  - Use third-party estimated-audience-demographics tools (e.g., Social Blade, NoxInfluencer) as a proxy where available, clearly labeled as an estimate, not ground truth.
-  - Infer audience-segment proxies from public signals — e.g., comment-section language/sentiment, video topic/niche as a demographic proxy (a well-documented correlation, e.g. gaming content skewing younger) — acknowledging this is a weaker substitute for real demographic data.
-  - As a fallback/contingency, narrow scope to a "same-channel" audience-preference model: hold the audience roughly fixed (one channel/niche) and study how *that* audience's engagement responds to trait changes over time, sidestepping the need for cross-channel demographic data entirely.
+Two GitHub Actions workflows run the pipeline. Both run on a schedule from `main` and can be started by
+hand (Actions tab → workflow → **Run workflow**). They authenticate with the repository secrets
+`GOOGLE_SERVICE_ACCOUNT_JSON` and `YOUTUBE_API_KEY`.
 
-**c. Trait labels (LLM-tagged)**
-- **Source:** Generated by us — no external API. We will use an LLM (e.g., via the Anthropic or OpenAI API) to tag each sampled video against a fixed trait taxonomy (content/topic, video format, hashtags/tags, creator background, theme, industry/niche), producing a structured score/label per trait per video.
-- **API strategy:** Batch video metadata (title, description, transcript/captions if available via `captions.list`) into a structured prompt per video, with a fixed output schema (e.g., JSON), and store results alongside the video's engagement metrics.
+| | [Ingest videos](.github/workflows/ingest_videos.yml) | [Tag videos](.github/workflows/tag_videos.yml) |
+|---|---|---|
+| **When** | Daily 09:00 UTC | Daily 10:00 UTC, an hour after ingest |
+| **Runs** | `python src/ingest.py --env github` | `python src/tag_videos.py --env github` |
+| **Does** | Reads the creator list from the sheet; for those channels, upserts `channels` and `videos` (new uploads included) and writes today's partition of `video_daily_snapshots` and `channel_daily_snapshots`. Never deletes anything | Builds the queue of untagged eligible videos from the sheet's channels and scores them with Gemini; appends the scores to `llm_tagged` in batches |
+| **Stops early** | Fails if the sheet has no usable channel URLs | Before the per-run spend cap ($25), near 300 minutes, or after 3 failed batches in a row; the next run resumes the queue |
+| **Rerun** | Safe: overwrites today's snapshot partition | Safe: already-tagged videos are skipped |
+| **Manual inputs** | None | `max_videos` (tag at most N), `dry_run` (print the queue and estimated cost only) |
 
-**Team working sheet (source of truth for the creator list and trait definitions):** [Channel Selection.xlsx on Google Drive](https://docs.google.com/spreadsheets/d/1TK60Al7OyGIbhZMVXZcjNbQjI0UmEqHp/edit?usp=sharing&ouid=101825006116878587105&rtpof=true&sd=true). It holds (1) the channel list (name, URL, genre, subscriber count) and (2) the trait list with a definition per trait and the universal 0–4 scale. `CHANNEL_URLS` in `src/config.py` and `TRAITS` in `src/traits.py` should mirror this sheet.
+Checking logs and troubleshooting failed runs: [GIT_WORKFLOW.md § 8](GIT_WORKFLOW.md#8-github-actions-checking-runs-and-troubleshooting).
 
-**d. Supplementary/backup data**
-- Public Kaggle datasets (e.g., "Trending YouTube Video Statistics") as a fallback if live API collection is slow or rate-limited, to validate the pipeline end-to-end while live data collection continues in parallel.
+## Using the dashboard
 
-## 4. Methodology
+Not built yet.
 
-1. **Data ingestion & feature engineering.** Build an ETL pipeline to pull video metadata/engagement from the YouTube Data API across a curated set of creators, and construct the trait taxonomy.
-2. **LLM-based trait tagging.** Tag each sampled video against the trait taxonomy using an LLM, producing structured, scored trait features per video.
-3. **Engagement model.** Train a model (starting with an interpretable baseline — linear/regularized regression or gradient-boosted trees — over an LLM/deep-learning comparison later) using tagged traits as features against engagement metrics (views, likes, comments) to estimate each trait's contribution.
-4. **Audience preference model.** Rather than fitting one global trait-effect model, model trait × audience-segment interactions (factorization-machine-style interaction terms, or a segment-stratified model) so a trait's estimated effect is conditioned on who the audience actually is, not a population average. See the data-strategy note above for how we'll approximate audience segments given API access constraints.
-5. **Correlation → causal identification.** Explicitly separate the associational engagement model above from a causal-identification step — e.g., looking at within-channel changes over time (a channel that changes format/theme), matching on observable channel/video characteristics, or other quasi-experimental designs — to distinguish "this trait is merely correlated with engagement" from "this trait plausibly causes it."
-6. **Optimization model.** Given the fitted (and where possible, causally-adjusted) trait parameters, use a linear or integer optimization model to find the trait combination that maximizes a specific creator's predicted engagement, subject to feasibility constraints (e.g., traits consistent with that creator's brand/resources).
-7. **LLM-as-recommender benchmark.** As a comparison arm: prompt an LLM directly (given the same trait taxonomy and a creator's history) to recommend traits for a next video, and compare its recommendations — and the reasoning behind them — against the ML + optimization pipeline's output.
-8. **Verification.** Backtest recommendations against held-out historical videos (chronological train/test split to avoid lookahead bias), and sanity-check trait-effect estimates against qualitative creator/domain knowledge.
+<!-- TODO: screenshot of the dashboard once it exists -->
+`[Screenshot placeholder: per-creator dashboard]`
 
-## 5. Expected Outcomes
+TODO: describe each view and slider once built. The plan: pick a creator, move a slider per trait
+(0-4), and see the model's predicted change in views, relative to that creator's typical video.
 
-- A quantified estimate of which content traits drive engagement, and how that varies by audience segment.
-- A working prototype that, given a creator's channel history, recommends a trait combination for their next video to maximize expected engagement.
-- A documented comparison of the formal ML + optimization pipeline vs. a direct LLM recommendation, including where each is more/less reliable.
-- A reusable trait-tagging and engagement-modeling pipeline that could extend to additional creators or platforms.
+Until then, results live in the notebooks (see Results so far).
 
-## 6. Timeline
+## Data
 
-| Week(s) | Focus | Tasks | Deliverables |
+| | As of 2026-10-22 |
+|---|---|
+| Channels | 52, from the team sheet (curated across genres and sizes) |
+| Videos | 13,216, published since 2025-10-15 (365-day window) |
+| Traits | 79 in 5 categories: Format 33, Subject Matter 15, Tone and Emotion 11, Production 10, Audience Hooks 10. 75 scored 0-4, 4 binary |
+| Tagged videos | 2,462 |
+| Daily snapshots | Since 2026-10-15 (one row per video and per channel per day) |
+
+**What's collected:** every field the YouTube Data API returns to an API key (title, description, tags,
+category, duration, publish time, lifetime views, likes, comments, …), plus channel subscribers and totals.
+Engagement counts are lifetime totals, so the daily snapshots are what make growth over time measurable.
+
+**BigQuery tables** (dataset `youtube`): `channels`, `videos` (one row per video, latest values),
+`video_daily_snapshots`, `channel_daily_snapshots` (date-partitioned), `llm_tagged` (one row per video,
+one column per trait).
+
+## Results so far
+
+From a frozen sample of 726 videos tagged by 2026-10-15 (random 80/20 split; the channel list has changed
+since, and the notebooks are being updated):
+
+| Target | Model | Train R² | Test R² |
 |---|---|---|---|
-| 1 | Team formation | Form team, assign roles (business framing, data, methods, AI-assisted implementation, verification, communication), pick initial creator/niche scope. | Team roles; initial scope note. |
-| 2 | Scoping | Draft working scoping document; test YouTube Data API access; confirm the audience-demographics constraint and chosen mitigation. | Working scoping doc draft. |
-| 3 | Executive buy-in | Finalize scoping document; build the executive deck; present for 10–15 min. | Scoping doc; executive deck; presentation. |
-| 4–5 | Data ingestion | Build ETL pipeline: pull video metadata/engagement across curated creators; assemble the trait taxonomy. | ETL pipeline; raw dataset; trait taxonomy v1. |
-| 6–7 | Trait tagging | Build and validate the LLM trait-tagging pipeline; spot-check tags against human judgment. | Tagged dataset; tagging accuracy/consistency check. |
-| 8–9 | Engagement model | Fit baseline engagement model(s); evaluate fit; identify top trait drivers. | Baseline model; feature-importance report. |
-| 9–10 | Audience preference model | Build trait × audience-segment interaction model given available demographic/proxy data. | Segment-interaction model; findings memo. |
-| 10 | *(Week 7 = holiday; adjust as needed)* | — | — |
-| 11 | Correlation → causal | Design and run the causal identification analysis (within-channel changes, matching, or similar). | Causal-analysis writeup. |
-| 12 | Optimization model | Build the trait-combination optimization model; test recommendations for sample creators. | Optimization model; sample recommendations. |
-| 13 | LLM benchmark | Build the direct-LLM-recommendation benchmark; compare against the pipeline's output. | Comparison report. |
-| 14 | *(Week 14 = holiday)* | — | — |
-| 15 | Final polish | Refine analysis based on feedback; quantify business impact/value; polish visuals and narrative. | Draft final deck + report. |
-| 16 | Final delivery | Final presentation (15–20 min); final report; reproducible code repository. | Final presentation; final report; repo. |
+| log(views) | OLS, 372 columns | 0.89 | 0.19 |
+| log(views) | Lasso (keeps 118 columns) | 0.76 | 0.66 |
+| log(likes) | OLS | 0.89 | 0.14 |
+| log(likes) | Lasso (keeps 125 columns) | 0.76 | 0.64 |
 
-## 7. Contingency Plan
+Plain OLS overfits (372 columns for 580 training videos); Lasso generalizes. Raw view and like counts
+are dominated by a few viral videos and don't predict well on either model, so the log targets are used.
 
-**Potential sticking points:**
-1. **Audience demographic data access** — true per-video/per-channel demographics are only available for channels we own (YouTube Analytics API OAuth restriction).
-2. **LLM trait-tagging consistency** — an LLM may tag traits inconsistently across videos/creators without a carefully specified taxonomy and prompt.
-3. **Causal identification** — isolating a causal trait effect from confounders (channel size, algorithm changes over time, topic popularity trends) is inherently hard with observational data.
-4. **API quota/rate limits** — the YouTube Data API has daily quota limits that could slow large-scale data collection.
+AI vs human tags, on the 5 hand-tagged videos also in the dataset: 64% exact agreement and 86% within one
+point on the 0-4 scale (mean absolute difference 0.55); present/absent F1 0.76. Five videos is a small
+sample.
 
-**Pivot strategies:**
-1. **If demographic data access fails:** narrow to a same-channel audience-preference model (see Data Description §b), or use publicly available Kaggle datasets with engagement metrics only (skip the audience-segment layer, and note it as a limitation).
-2. **If LLM tagging proves inconsistent:** tighten the taxonomy/prompt with few-shot examples and a validation rubric; have a team member spot-check a sample of tags for agreement.
-3. **If causal identification proves infeasible in the time available:** fall back to a clearly-labeled correlational analysis, explicitly stating that finding as a limitation rather than overclaiming causality.
-4. **If API access is rate-limited or restricted:** fall back to publicly available datasets (e.g., Kaggle's YouTube trending-video datasets) to keep the pipeline moving while live collection continues in the background.
+## Setup and running
 
-## TODO
+**Prerequisites**
+- Python 3.12
+- A Google Cloud project with these APIs enabled: YouTube Data API v3, BigQuery, Google Sheets, Vertex AI
+- A service account with BigQuery Data Editor, BigQuery Job User and Vertex AI User (Agent Platform User);
+  share the Google Sheet with its email
+- A YouTube Data API key
 
-The running task list lives in [TODO.md](TODO.md).
+**Credentials:** create a `.env` file in the repo root (it is gitignored) with these variables:
 
-## Course framing (DSO 585)
+| Variable | Value |
+|---|---|
+| `YOUTUBE_API_KEY` | Your YouTube Data API key |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to the service-account JSON key (keep the key file outside the repo) |
 
-This project follows the course's FRAME → DATA → FORMULATE → IMPLEMENT → VERIFY → INTERPRET workflow (per the DSO 585 course overview). Phase I deliverables are a Feasibility & Problem Formulation Brief, a Preliminary Business Dollar Value Assessment, and a Scope of Work — all of which should trace back to the business problem and research questions above.
+GitHub Actions uses the repository secrets `YOUTUBE_API_KEY` and `GOOGLE_SERVICE_ACCOUNT_JSON` instead.
+Sheet, project, dataset, tagging model and budget settings are in [`src/config.py`](src/config.py).
+
+**Install**
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt              # pipeline
+pip install -r requirements-notebooks.txt    # also for the notebooks
+```
+
+**Run**
+```bash
+python src/ingest.py --env local             # pull everything into BigQuery (+ CSV copies in data/)
+python src/tag_videos.py --dry-run           # show the tagging queue and estimated cost, no API calls
+python src/tag_videos.py --max-videos 3      # tag a few videos as a test
+python src/tag_videos.py                     # tag the queue (stops at the per-run spend cap)
+jupyter notebook notebooks/                  # EDA and models (TODO: being updated to the current pipeline)
+```
+`--env github` writes BigQuery only (the scheduled runs use it).
+
+Dashboard: TODO (not built yet).
+
+## Repo structure
+
+```
+.github/workflows/   ingest_videos.yml (09:00 UTC), tag_videos.yml (10:00 UTC)
+src/
+  config.py          hand-maintained settings: sheet, BigQuery, scope, model, budget
+  ingest.py          nightly ingest and daily snapshots
+  tag_videos.py      Gemini trait tagging
+  youtube_api.py     YouTube Data API wrappers
+  bigquery_io.py     BigQuery reads, writes, snapshot tables
+  sheet.py           creator list from the Google Sheet
+  traits.py          trait list from the Google Sheet
+notebooks/           00 EDA, 01 OLS baseline, 02 Lasso, 03 AI vs manual tags
+docs/                PROPOSAL.md (original project proposal)
+TODO.md              task list and open questions
+```
+
+## Contributing
+
+- New to the repo or to Git? Read [GIT_WORKFLOW.md](GIT_WORKFLOW.md): branches, pull requests, setup, and
+  how to check and troubleshoot the GitHub Actions runs.
+- Using Claude Code? [CLAUDE.md](CLAUDE.md) holds the project context and a running status log.
+- Open tasks and questions are in [TODO.md](TODO.md).

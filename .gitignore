@@ -222,3 +222,7 @@ __marimo__/
 
 # Data lives in BigQuery; local CSVs are backups only
 data/
+*.csv
+
+# Slide decks are shared outside the repo
+DSO_585_Brief_Deck.pptx

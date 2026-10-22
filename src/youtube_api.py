@@ -27,7 +27,7 @@ VIDEO_PARTS = "id,snippet,contentDetails,statistics,status,topicDetails,liveStre
 
 def get_client():
     if not YOUTUBE_API_KEY:
-        sys.exit("YOUTUBE_API_KEY is empty. Copy .env.example to .env and fill it in.")
+        sys.exit("YOUTUBE_API_KEY is empty. Set it in .env (local runs) or as the YOUTUBE_API_KEY repository secret (GitHub Actions).")
     return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
 

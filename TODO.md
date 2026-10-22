@@ -3,7 +3,7 @@
 Working notes for the next stage after YouTube ingestion. See [README.md](README.md) for
 the project overview and [CLAUDE.md](CLAUDE.md) for the status log.
 
-Last updated: 2026-10-21 (daily snapshots; production-shaped pipeline)
+Last updated: 2026-10-22 (public repo, README rewrite)
 
 ---
 
@@ -30,6 +30,11 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] Restore the 150 `llm_tagged` rows of On The Radar Radio / Apple / Bloomberg deleted on 2026-10-21 (tag history is kept by rule); time travel only reaches back 7 days, so before 2026-10-28
 - [ ] Decide whether to rebuild the YouTube tables from scratch (drop channels, videos, engagement_snapshots, both snapshot tables; rerun ingest) so only `llm_tagged` is legacy
 - [ ] Drop the `youtube_dev` test dataset (one dataset for every run)
+- [x] README rewritten as a manual; proposal moved to `docs/PROPOSAL.md`; Actions troubleshooting added to GIT_WORKFLOW.md (2026-10-22)
+- [ ] Rename the GitHub repo to `youtube-engagement-insights` (docs already point at the new URL); set description and topics
+- [ ] README TODOs: credits (team and roles), what "sentiment" means, dashboard screenshot and usage once built
+- [ ] Commit-author emails: switch to the GitHub no-reply address going forward (10 early commits show a work email)
+- [ ] Delete the duplicate `llm_tagged` row for QX3txldu5h4 (keep the 2026-10-15 22:23 one), and make tagger writes insert-only-if-new
 - [ ] Decide a brand vs independent-creator rule: triple j (ABC radio, 768 videos/yr, ~11K median views on 2.1M subs) looks like On The Radar Radio; Architectural Digest is Condé Nast like the removed Bon Appétit; Jubilee, First We Feast, Cut are media companies
 - [ ] Wayne Hu (@nogatekeepers) has no uploads in the past year (contributes no videos); Stavvy's World still has a search link instead of a channel link
 - [ ] Decide sampling for later batches: most recent X vs evenly spread over the year (prolific channels' 50 newest span only days)

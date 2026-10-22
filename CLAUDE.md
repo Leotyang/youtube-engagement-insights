@@ -1,4 +1,4 @@
-# CLAUDE.md — Project Context for DSO_585_project
+# CLAUDE.md — Project Context for youtube-engagement-insights (DSO 585)
 
 This file gives Claude (Claude Code) persistent context on this project, so it doesn't
 need to be re-explained every session. **See [README.md](README.md) for the full
@@ -77,6 +77,13 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-10-22:** Repo made public (linked from Leo's resume). README rewritten as a manual (overview, status,
+  Mermaid pipeline, the two workflows, data counts, early results, setup, structure); the original proposal moved
+  to `docs/PROPOSAL.md`. GIT_WORKFLOW.md § 8 covers reading Actions logs, rerunning, and common failures.
+  Secrets audit of all history: no keys or credential files ever committed; 10 early commits carry Leo's work email
+  in their author metadata. `.env.example` removed (README lists the variables); the slide deck untracked and
+  `*.csv` gitignored. Repo rename to `youtube-engagement-insights` planned (docs already use the new URL).
+  The dashboard and sentiment features do not exist yet; the README marks them as planned.
 - **2026-10-21:** Pipeline made production-shaped. Ingest pulls only the channels on the sheet and never
   deletes: it upserts `channels` and `videos` (latest metadata and counts; `pulled_at`/`age_days_at_pull` = this
   pull, `first_pulled_at` = first pull), adds new videos at any age (no 3-day wait), re-fetches every video of

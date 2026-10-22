@@ -54,7 +54,7 @@ time.
 
 6. Clone the repo using the SSH URL (not HTTPS):
    ```
-   git clone git@github.com:leotyang/DSO_585_project.git
+   git clone git@github.com:Leotyang/youtube-engagement-insights.git
    ```
 
 ## 3. Copying file paths (Mac and PC)
@@ -186,4 +186,69 @@ git push -u origin leo/add-visualizations
 # Open PR on GitHub: base = dev, compare = leo/add-visualizations
 # Teammate reviews, requests changes or approves
 # Once approved -> Merge pull request
+```
+
+## 8. GitHub Actions: checking runs and troubleshooting
+
+Two workflows run the pipeline every night from `main` (what each does: [README → Automated workflows](README.md#automated-workflows)):
+
+| Workflow | Schedule | Script |
+|---|---|---|
+| **Ingest videos** | 09:00 UTC (2 AM PDT / 1 AM PST) | `src/ingest.py` |
+| **Tag videos** | 10:00 UTC (3 AM PDT / 2 AM PST) | `src/tag_videos.py` |
+
+### Reading a run's log
+
+1. On GitHub, open the **Actions** tab. The left sidebar lists the two workflows; click one to see its runs.
+   A green check means it succeeded, a red X means it failed, a yellow dot means it's running.
+2. Click a run → click the job (`ingest` or `tag`) → expand the step that runs the script
+   (**Pull channels, videos, engagement into BigQuery** or **Tag videos with Gemini**). The script's output is there,
+   and it streams live while the run is going.
+3. To keep a copy: the gear icon at the top right of the log → **Download log archive**.
+
+The repo is public, so these logs are public too. The scripts never print keys; never paste one into an issue,
+PR or commit.
+
+### Running or rerunning by hand
+
+- **Run now:** Actions → pick the workflow → **Run workflow** → branch `main`. Needs write access to the repo.
+  For **Tag videos**, `max_videos` limits how many videos to tag (handy for a quick test) and `dry_run` only prints
+  the queue and estimated cost.
+- **Rerun a failed run:** open it → **Re-run jobs** → **Re-run failed jobs**. Both workflows are safe to rerun:
+  ingest overwrites today's snapshot instead of duplicating it, and tagging skips videos already tagged.
+- **Get notified of failures:** GitHub → your profile photo → **Settings** → **Notifications** → **Actions** →
+  "Only notify for failed workflows". Emails for scheduled runs go to whoever last edited the workflow's schedule.
+
+### Common problems
+
+| What you see in the log | Likely cause | Fix |
+|---|---|---|
+| `quotaExceeded` (HTTP 403 from the YouTube API) | The day's 10,000-unit YouTube quota is used up | Wait: it resets at midnight Pacific. Check whether someone ran ingest several times that day |
+| `YOUTUBE_API_KEY is empty` | The `YOUTUBE_API_KEY` repository secret is missing | Settings → Secrets and variables → Actions: add it (ask Leo) |
+| `Your default credentials were not found` / `DefaultCredentialsError` | The `GOOGLE_SERVICE_ACCOUNT_JSON` secret is missing or empty | Same place: add or replace the secret (ask Leo) |
+| `The caller does not have permission` when reading the sheet | The Google Sheet isn't shared with the service account | Share the sheet with the service account's email (viewer is enough) |
+| `Sheet: 'X' URL isn't an @handle, /channel/ or /user/ link, skipping` | A row in **Channel Selection** has a link the API can't use (e.g. a search link) | Replace it with the channel's `https://www.youtube.com/@handle` link |
+| `No channel found for <url>, skipping` | The handle is misspelled or the channel changed it | Fix the URL in the sheet |
+| `No usable channel URLs in the Google Sheet.` | The **Channel Selection** tab is empty or every URL is unusable | Check the tab and its column order (Name, URL, Genre, Size) |
+| `Sheet tab 'Content Traits' is missing column(s)` / `has no Definition` / `has Scale` | The trait tab was edited into a shape the tagger can't read | Restore the columns Category, Scale, Trait, Definition; Scale must be Linear or Binary |
+| `The trait list in the sheet changed since the rows in llm_tagged were tagged` | Someone edited a trait in **Content Traits** | Revert the edit. Changing traits means re-tagging everything, so discuss it with the team first |
+| `busy/rate-limited/timeout, retrying in ...` | Gemini is temporarily overloaded (429 / 5xx) | Nothing: the tagger retries on its own |
+| `Stopped early: ... batches in a row tagged nothing` | Gemini stayed overloaded past the retries | Nothing: the next night resumes the queue. Rerun later if it's urgent |
+| `Stopped early: the next request would pass the $25 per-run spend cap` | The queue is bigger than one night's budget | Expected for a big backlog; the next run continues |
+| `Access Denied` / `bigquery.jobs.create` permission errors | The service account lost a BigQuery role | GCP console → IAM: BigQuery Data Editor and BigQuery Job User on the service account |
+| No run at all on a given night | Schedules only run from `main`, can start up to an hour late, and GitHub pauses them in a public repo after 60 days without repository activity | Check the workflow is on `main`; if paused, Actions → the workflow → **Enable workflow** |
+
+### Checking the data in BigQuery
+
+A run can succeed but write less than expected. Quick checks in the BigQuery console (project
+`dso-585-project-16336`, dataset `youtube`):
+
+```sql
+-- One row per video per day: today's count should be close to the number of videos
+SELECT snapshot_date, COUNT(*) AS videos FROM `dso-585-project-16336.youtube.video_daily_snapshots`
+GROUP BY 1 ORDER BY 1 DESC LIMIT 7;
+
+-- Videos tagged per day
+SELECT DATE(tagged_at) AS day, COUNT(*) AS tagged FROM `dso-585-project-16336.youtube.llm_tagged`
+GROUP BY 1 ORDER BY 1 DESC LIMIT 7;
 ```
