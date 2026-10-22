@@ -1,9 +1,8 @@
 """Tag videos with content traits using Gemini on Vertex AI (Agent Platform), which watches each
 YouTube video directly (frames + audio) from its public URL.
 
-Which videos: rows of BigQuery `videos` no longer than MAX_VIDEO_SECONDS, outside
-TAGGING_SKIP_CHANNELS, among each channel's MAX_VIDEOS_PER_CHANNEL most recent such uploads, and
-not yet in `llm_tagged`. The queue runs in rank order (every
+Which videos: rows of BigQuery `videos` from channels currently on the sheet, no longer than MAX_VIDEO_SECONDS,
+among each channel's MAX_VIDEOS_PER_CHANNEL most recent such uploads, and not yet in `llm_tagged`. The queue runs in rank order (every
 channel's newest video, then every channel's 2nd newest, ...), so a run that stops early still
 leaves a balanced sample. Raising either cap later tags only the newly eligible videos.
 
@@ -42,14 +41,35 @@ from google.genai import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bigquery_io import get_client as get_bq_client, query_rows, set_column_descriptions, write_table
-from config import (GCP_PROJECT_ID, BQ_DATASET, TAGGING_MODEL, TAGGING_LOCATION,
-                    MAX_VIDEO_SECONDS, MAX_VIDEOS_PER_CHANNEL, MAX_VIDEOS_PER_REQUEST, MAX_SECONDS_PER_REQUEST,
-                    SECONDS_BETWEEN_REQUESTS, PARALLEL_REQUESTS, REQUEST_TIMEOUT_SECONDS, MAX_CONSECUTIVE_FAILED_BATCHES,
-                    MAX_REQUEST_ATTEMPTS, RETRY_BASE_SECONDS, SAVE_EVERY_ROWS, SAVE_EVERY_SECONDS,
-                    MAX_SPEND_PER_RUN_USD, MAX_RUNTIME_MINUTES, INPUT_PRICE_PER_M,
-                    OUTPUT_PRICE_PER_M, VIDEO_TOKENS_PER_SECOND, PROMPT_TOKENS_PER_REQUEST, OUTPUT_TOKENS_PER_VIDEO,
-                    TAGGING_SKIP_CHANNELS, LLM_TAGGED_PATH)
+from config import (GCP_PROJECT_ID, BQ_DATASET, TAGGING_MODEL, TAGGING_LOCATION, MAX_VIDEO_SECONDS, MAX_VIDEOS_PER_CHANNEL,
+                    MAX_SPEND_PER_RUN_USD, INPUT_PRICE_PER_M, OUTPUT_PRICE_PER_M, LLM_TAGGED_PATH)
+from sheet import get_creators
 from traits import get_traits
+
+# Request sizing. One video per request: multi-video requests often failed (504 deadline / 429) and fell
+# back to one video at a time, making runs ~3x slower than sending single videos.
+MAX_VIDEOS_PER_REQUEST = 1
+MAX_SECONDS_PER_REQUEST = 45 * 60
+# Requests in flight at once. Each waits ~0.5-2 min on Gemini; more in flight is faster but raises the odds of
+# 429 "resource exhausted" from Google's shared capacity (8 drew many 429s, 3 was too slow).
+PARALLEL_REQUESTS = 5
+SECONDS_BETWEEN_REQUESTS = 3   # stagger between starting requests
+REQUEST_TIMEOUT_SECONDS = 600  # a request that hangs this long is abandoned (and retried)
+# Retries for 429/5xx/timeouts/dropped connections: waits of ~10, 20, 40, 80 s (each randomized +-50%).
+MAX_REQUEST_ATTEMPTS = 5
+RETRY_BASE_SECONDS = 10
+# Results are written to BigQuery every SAVE_EVERY_ROWS videos or SAVE_EVERY_SECONDS, whichever is first.
+# One write per video would run into BigQuery's daily limit on load jobs per table (about 1,500).
+SAVE_EVERY_ROWS = 10
+SAVE_EVERY_SECONDS = 120
+# Stop the run (the next run resumes) after this many batches in a row tag nothing.
+MAX_CONSECUTIVE_FAILED_BATCHES = 3
+# GitHub kills a job at 6 h; stop starting requests well before that.
+MAX_RUNTIME_MINUTES = 300
+# Token use per request, measured on the pilot videos; feeds the spend estimate.
+VIDEO_TOKENS_PER_SECOND = 91
+PROMPT_TOKENS_PER_REQUEST = 4000
+OUTPUT_TOKENS_PER_VIDEO = 800
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--env", choices=["local", "github"], default="local")
@@ -113,12 +133,13 @@ queue_rows = query_rows(bq_client, f"""
     FROM (
       SELECT *, ROW_NUMBER() OVER (PARTITION BY snippet_channelId ORDER BY snippet_publishedAt DESC) AS channel_rank
       FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.videos`
-      WHERE duration_seconds > 0 AND duration_seconds <= @max_seconds AND snippet_channelId NOT IN UNNEST(@skip)
+      WHERE duration_seconds > 0 AND duration_seconds <= @max_seconds
+        AND snippet_channelId IN (SELECT id FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.channels` WHERE channel_url IN UNNEST(@sheet_urls))
     )
     WHERE channel_rank <= @per_channel
     ORDER BY channel_rank, channel_id""", [
     bigquery.ScalarQueryParameter("max_seconds", "FLOAT64", MAX_VIDEO_SECONDS),
-    bigquery.ArrayQueryParameter("skip", "STRING", list(TAGGING_SKIP_CHANNELS)),
+    bigquery.ArrayQueryParameter("sheet_urls", "STRING", get_creators()["channel_url"].tolist()),
     bigquery.ScalarQueryParameter("per_channel", "INT64", MAX_VIDEOS_PER_CHANNEL),
 ])
 if not queue_rows:
@@ -151,8 +172,8 @@ def estimate_cost(video_seconds, n_videos, n_requests):
 
 
 queue_seconds = df_queue["duration_seconds"].sum() if len(df_queue) else 0
-print(f"Eligible: {eligible} videos (<= {MAX_VIDEO_SECONDS / 60:.0f} min, top {MAX_VIDEOS_PER_CHANNEL} per channel, "
-      f"{len(TAGGING_SKIP_CHANNELS)} channel(s) skipped); already tagged: {len(tagged_ids)}")
+print(f"Eligible: {eligible} videos (<= {MAX_VIDEO_SECONDS / 60:.0f} min, top {MAX_VIDEOS_PER_CHANNEL} per channel); "
+      f"already tagged: {len(tagged_ids)}")
 print(f"This run: {len(df_queue)} videos from {df_queue['channel_id'].nunique() if len(df_queue) else 0} channels, "
       f"{queue_seconds / 3600:.1f} h of video, {len(batches)} requests, "
       f"est ${estimate_cost(queue_seconds, len(df_queue), len(batches)):.2f} (cap ${MAX_SPEND_PER_RUN_USD} per run)")

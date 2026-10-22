@@ -3,7 +3,7 @@
 Working notes for the next stage after YouTube ingestion. See [README.md](README.md) for
 the project overview and [CLAUDE.md](CLAUDE.md) for the status log.
 
-Last updated: 2026-10-21 (daily snapshots; channel list synced with the sheet)
+Last updated: 2026-10-21 (daily snapshots; production-shaped pipeline)
 
 ---
 
@@ -26,7 +26,10 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] Add GitHub secret `GOOGLE_SERVICE_ACCOUNT_JSON` (+ `YOUTUBE_API_KEY`); check the first push-triggered Actions runs
 - [x] Remove the TEMPORARY `push:` trigger in `tag_videos.yml` (2026-10-21)
 - [ ] Merge the pipeline to `main` so the nightly schedules run (nothing has run on a schedule since 2026-10-15: `main` has no workflows); untrack `data/` first (`git rm -r --cached data`)
-- [x] On The Radar Radio, CNBC, Apple, Bloomberg Originals removed from the sheet; ingest deleted their rows from every table (2026-10-21)
+- [x] On The Radar Radio, CNBC, Apple, Bloomberg Originals removed from the sheet; their rows deleted from BigQuery (2026-10-21)
+- [ ] Restore the 150 `llm_tagged` rows of On The Radar Radio / Apple / Bloomberg deleted on 2026-10-21 (tag history is kept by rule); time travel only reaches back 7 days, so before 2026-10-28
+- [ ] Decide whether to rebuild the YouTube tables from scratch (drop channels, videos, engagement_snapshots, both snapshot tables; rerun ingest) so only `llm_tagged` is legacy
+- [ ] Drop the `youtube_dev` test dataset (one dataset for every run)
 - [ ] Decide a brand vs independent-creator rule: triple j (ABC radio, 768 videos/yr, ~11K median views on 2.1M subs) looks like On The Radar Radio; Architectural Digest is Condé Nast like the removed Bon Appétit; Jubilee, First We Feast, Cut are media companies
 - [ ] Wayne Hu (@nogatekeepers) has no uploads in the past year (contributes no videos); Stavvy's World still has a search link instead of a channel link
 - [ ] Decide sampling for later batches: most recent X vs evenly spread over the year (prolific channels' 50 newest span only days)
@@ -54,7 +57,8 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
   - [ ] Ridge / elastic net for comparison; multicollinearity check (correlated trait pairs) deferred
   - [ ] Evaluate on held-out channels (grouped CV), not only random rows
   - [ ] Re-run when tagging finishes (~1,980 videos): move `ANALYSIS_TAGGED_BEFORE` in `config.py` and rerun notebooks 00-03. Note: `videos` counts are now refreshed nightly, so the Oct 15 results reproduce only from the 2026-10-15 snapshot partition
-- [x] Daily snapshots: `video_daily_snapshots` and `channel_daily_snapshots` (one row per video / channel per day, date-partitioned, written by ingest; seeded with the 2026-10-15 pulls) (2026-10-21)
+- [x] Daily snapshots: `video_daily_snapshots` and `channel_daily_snapshots` (one row per video / channel per day, date-partitioned, written by ingest) (2026-10-21)
+- [ ] Notebooks: `config.ANALYSIS_TAGGED_BEFORE` and `config.MODEL_MATRIX_PATH` were removed from `config.py` (analysis settings, not pipeline settings) and `DATA_DIR` moved to `data/`; give each notebook its own settings cell and pin a snapshot date so results stay reproducible
 - [ ] Age normalization: after 3-4 weeks of snapshots, estimate growth curves (Shorts vs long-form) and normalize views to a reference age; meanwhile try a channel-relative, age-adjusted log-views target
 - [ ] Build the audience preference/segment model
 - [ ] Build the optimization model (best trait combination per creator)

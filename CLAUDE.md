@@ -77,20 +77,21 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
-- **2026-10-21:** Ingest rebuilt around daily snapshots. Each nightly run: deletes every row (videos,
-  engagement_snapshots, llm_tagged, snapshot tables) of channels no longer on the sheet (stops if > 5 would go;
-  `--allow-mass-removal`), replaces `channels`, discovers new videos at any age (the 3-day wait is gone),
-  re-fetches every known video (videos.list, ~265 calls for 13K videos), upserts `videos` (latest metadata and
-  counts; `pulled_at`/`age_days_at_pull` = this pull, new `first_pulled_at` = first pull), and overwrites today's
-  partition of `video_daily_snapshots` (grain video x day, `is_available` flags deleted/private videos) and
-  `channel_daily_snapshots` (grain channel x day). Kimball calls these periodic snapshot fact tables (not SCD:
-  SCD types track changing dimension attributes). Partition overwrite makes reruns idempotent (verified).
-  `src/seed_snapshots.py` copied the 2026-10-15 one-time pulls in as day one; `engagement_snapshots` is legacy.
-  `BQ_DATASET=youtube_dev` runs any script against a dev dataset (tested there first, via table clones). Sheet
-  sync removed CNBC, On The Radar Radio, Apple, Bloomberg Originals (20,236 videos, 150 tagged) and added Hasan
-  Minhaj, Midwest Safety, Kelly Wakasa, SauccEats, Tom Scott (+1,164 videos) and Wayne Hu (no videos in the past
-  year). Now 52 channels, 13,188 videos. New-channel EDA in `00_eda_charts`: all fit inside the existing ranges.
-  Temporary push trigger removed from `tag_videos.yml`; `data/` gitignored (CSVs still tracked until untracked).
+- **2026-10-21:** Pipeline made production-shaped. Ingest pulls only the channels on the sheet and never
+  deletes: it upserts `channels` and `videos` (latest metadata and counts; `pulled_at`/`age_days_at_pull` = this
+  pull, `first_pulled_at` = first pull), adds new videos at any age (no 3-day wait), re-fetches every video of
+  the sheet's channels (~265 videos.list calls for 13K videos), and overwrites today's partition of
+  `video_daily_snapshots` (grain video x day, `is_available` flags deleted/private videos) and
+  `channel_daily_snapshots` (grain channel x day). Kimball calls these periodic snapshot fact tables (SCD types
+  are for changing dimension attributes). Partition overwrite makes reruns idempotent. Removing a channel's data
+  is a manual one-off query, never pipeline logic; only `llm_tagged` history (paid for) must be kept. The tagger
+  queue is scoped to the sheet's channels; the skip list is gone (the sheet decides). `config.py` holds only
+  hand-maintained settings (sheet, BigQuery location, scope, model, budget, prices); calibrated tuning lives at
+  the top of `tag_videos.py`. One dataset (`youtube`) for every run; `--env local` = BigQuery + CSV copies in
+  `data/`, `--env github` = BigQuery only. Sheet changes: removed CNBC, On The Radar Radio, Apple, Bloomberg
+  Originals; added Hasan Minhaj, Midwest Safety, Kelly Wakasa, SauccEats, Tom Scott, Wayne Hu (no videos in the
+  past year). New-channel EDA in `00_eda_charts`: all fit inside the existing ranges. Temporary push trigger
+  removed from `tag_videos.yml`; `data/` gitignored.
 - **2026-10-15 (evening, deck):** Analysis frozen at `config.ANALYSIS_TAGGED_BEFORE` (3:30 PT, 726 tagged videos,
   48 channels); the tagger keeps running. Evaluation everywhere: random 20% test, 5-fold CV on the other 80%.
   Plain OLS (372 one-hot columns) overfits: log views train R2 0.89 vs test 0.19 (CV -0.25); adding feature groups

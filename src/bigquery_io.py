@@ -110,19 +110,6 @@ def write_partition(client, table_name, df, partition_date):
     print(f"BigQuery: wrote {len(df)} rows to {table_name} partition {partition_date}")
 
 
-def delete_channel_rows(client, table_name, channel_column, channel_ids):
-    """Delete every row of the given channels from a table; a table that doesn't exist yet is skipped."""
-    try:
-        job = client.query(
-            f"DELETE FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}` WHERE {channel_column} IN UNNEST(@channel_ids)",
-            job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ArrayQueryParameter("channel_ids", "STRING", channel_ids)]),
-        )
-        job.result()
-        print(f"BigQuery: deleted {job.num_dml_affected_rows} rows from {table_name}")
-    except NotFound:
-        pass
-
-
 def write_table(client, table_name, df, mode):
     """mode: 'replace' (overwrite table), 'append', or 'upsert' (delete rows whose `id` is in df, then append)."""
     table_id = f"{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}"
