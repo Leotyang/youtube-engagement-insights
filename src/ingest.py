@@ -1,25 +1,23 @@
-"""Nightly ingest: sync the creator list from the Google Sheet, refresh every video, snapshot engagement.
+"""Nightly ingest for the channels on the Google Sheet: upsert their latest metadata and metrics, snapshot engagement.
+
+Only channels currently on the sheet are pulled; nothing is ever deleted. Rows of a channel removed from the
+sheet stay in BigQuery untouched until they are cleaned up by hand.
 
 Each run:
-  1. Channels no longer on the sheet: delete their rows from every table (stops if more than
-     MAX_CHANNELS_REMOVED_PER_RUN would go; pass --allow-mass-removal to proceed).
-  2. channels: replaced with the sheet's current channels (all API fields).
-  3. Discover videos published in the last LOOKBACK_DAYS that aren't in BigQuery yet (new channels
-     get their whole year; existing channels stop paging at their first known video).
-  4. Re-fetch every known video plus the new ones (videos.list, 50 ids per quota unit) and write:
-       videos                   one row per video, latest metadata and counts. pulled_at and
-                                age_days_at_pull describe this pull; first_pulled_at the first one.
-       video_daily_snapshots    one row per video per day; unavailable videos get is_available = FALSE
+  1. channels                 upsert of the sheet's channels (all API fields).
+  2. New videos               each channel's uploads from the last LOOKBACK_DAYS that aren't in BigQuery yet
+                              (a new channel gets its whole window; known channels stop at their first known video).
+  3. Every video of these channels is re-fetched (videos.list, 50 ids per quota unit) and written to
+       videos                   one row per video, latest metadata and counts. pulled_at and age_days_at_pull
+                                describe this pull, first_pulled_at the first one.
+       video_daily_snapshots    one row per video per day; a video the API no longer returns (deleted or
+                                private) gets is_available = FALSE
        channel_daily_snapshots  one row per channel per day
-     Snapshot writes overwrite today's partition, so rerunning a day is safe.
-
-engagement_snapshots (one pull per video, 2026-10-15) is legacy and no longer written; its rows seed
-video_daily_snapshots for that date (src/seed_snapshots.py).
+     Snapshot writes replace today's partition, so rerunning a day is safe.
 
 Usage:
-  python src/ingest.py --env local    also writes CSV backups to config.DATA_DIR (default)
-  python src/ingest.py --env github   BigQuery only (used by the GitHub Action)
-  BQ_DATASET=youtube_dev python src/ingest.py ...   run against the dev dataset
+  python src/ingest.py --env local    BigQuery plus CSV copies in config.DATA_DIR (default)
+  python src/ingest.py --env github   BigQuery only (the GitHub Action)
 """
 
 import argparse
@@ -31,24 +29,14 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bigquery_io import (get_client as get_bq_client, get_existing_ids, query_rows, write_table, write_partition,
-                         ensure_snapshot_tables, delete_channel_rows)
-from config import (GCP_PROJECT_ID, BQ_DATASET, LOOKBACK_DAYS, MAX_CHANNELS_REMOVED_PER_RUN, DATA_DIR,
-                    CHANNELS_PATH, VIDEOS_PATH, VIDEO_SNAPSHOTS_PATH)
+                         ensure_snapshot_tables)
+from config import (GCP_PROJECT_ID, BQ_DATASET, LOOKBACK_DAYS, DATA_DIR, CHANNELS_PATH, VIDEOS_PATH,
+                    VIDEO_SNAPSHOTS_PATH, CHANNEL_SNAPSHOTS_PATH)
 from sheet import get_creators
 from youtube_api import get_client, get_channels, get_video_ids, get_videos
 
-# Every table that holds per-channel rows, and the column naming the channel.
-CHANNEL_COLUMNS = {
-    "videos": "snippet_channelId",
-    "engagement_snapshots": "snippet_channelId",
-    "llm_tagged": "channel_id",
-    "video_daily_snapshots": "channel_id",
-    "channel_daily_snapshots": "channel_id",
-}
-
 parser = argparse.ArgumentParser()
 parser.add_argument("--env", choices=["local", "github"], default="local")
-parser.add_argument("--allow-mass-removal", action="store_true", help=f"remove more than {MAX_CHANNELS_REMOVED_PER_RUN} channels in one run")
 args = parser.parse_args()
 
 df_creators = get_creators()
@@ -56,30 +44,17 @@ if df_creators.empty:
     sys.exit("No usable channel URLs in the Google Sheet.")
 
 dataset = f"{GCP_PROJECT_ID}.{BQ_DATASET}"
-print(f"Dataset {dataset}; about to query the YouTube API for {len(df_creators)} channels")
+print(f"About to query the YouTube API for {len(df_creators)} channels")
 youtube = get_client()
 now = datetime.now(timezone.utc)
 pulled_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 bq_client = get_bq_client()
 ensure_snapshot_tables(bq_client)
 
-# Removed channels are matched by URL against last run's channels table, not by which channels resolve
-# tonight, so a channel the API fails to look up once is never mistaken for a removal.
-sheet_urls = df_creators["channel_url"].tolist()
-removed = [row for row in query_rows(bq_client, f"SELECT id, snippet_title, channel_url FROM `{dataset}.channels`")
-           if row.channel_url not in sheet_urls]
-if removed:
-    print(f"Channels no longer on the sheet: {[row.snippet_title for row in removed]}")
-    if len(removed) > MAX_CHANNELS_REMOVED_PER_RUN and not args.allow_mass_removal:
-        sys.exit(f"Refusing to delete {len(removed)} channels in one run (limit {MAX_CHANNELS_REMOVED_PER_RUN}). "
-                 "Check the sheet, or rerun with --allow-mass-removal.")
-    for table_name, channel_column in CHANNEL_COLUMNS.items():
-        delete_channel_rows(bq_client, table_name, channel_column, [row.id for row in removed])
-
-df_channels = get_channels(youtube, sheet_urls)
+df_channels = get_channels(youtube, df_creators["channel_url"].tolist())
 df_channels = df_channels.merge(df_creators, on="channel_url", how="left")
 df_channels["pulled_at"] = pulled_at
-write_table(bq_client, "channels", df_channels, "replace")
+write_table(bq_client, "channels", df_channels, "upsert")
 
 known_ids = get_existing_ids(bq_client, "videos")
 print(f"{len(known_ids)} videos already in BigQuery")
@@ -90,12 +65,10 @@ for _, channel in df_channels.iterrows():
     print(f"{channel['snippet.title']}: {len(video_ids)} new videos")
     new_ids += video_ids
 
-# first_pulled_at keeps the first pull of each video; tables written before it existed fall back to pulled_at.
-videos_table = bq_client.get_table(f"{dataset}.videos") if known_ids else None
-first_pulled_column = "first_pulled_at" if videos_table and "first_pulled_at" in [field.name for field in videos_table.schema] else "pulled_at"
 df_known = pd.DataFrame([dict(row.items()) for row in query_rows(
-    bq_client, f"SELECT id, snippet_channelId AS channel_id, snippet_publishedAt AS published_at, {first_pulled_column} AS first_pulled_at FROM `{dataset}.videos`")],
+    bq_client, f"SELECT id, snippet_channelId AS channel_id, snippet_publishedAt AS published_at, first_pulled_at FROM `{dataset}.videos`")],
     columns=["id", "channel_id", "published_at", "first_pulled_at"])
+df_known = df_known[df_known["channel_id"].isin(df_channels["id"])]
 
 all_ids = df_known["id"].tolist() + new_ids
 print(f"Refreshing {len(all_ids)} videos ({len(new_ids)} new) in {(len(all_ids) + 49) // 50} API calls")
@@ -145,11 +118,14 @@ if args.env == "local":
     os.makedirs(DATA_DIR, exist_ok=True)
     df_channels.to_csv(CHANNELS_PATH, index=False)
     df_videos.to_csv(VIDEOS_PATH, index=False)
-    df_snapshot_csv = df_video_snapshot
-    if os.path.exists(VIDEO_SNAPSHOTS_PATH):
-        df_snapshot_csv = pd.concat([pd.read_csv(VIDEO_SNAPSHOTS_PATH), df_video_snapshot.astype({"snapshot_date": str})], ignore_index=True)
-    df_snapshot_csv.astype({"snapshot_date": str}).drop_duplicates(["video_id", "snapshot_date"], keep="last").to_csv(VIDEO_SNAPSHOTS_PATH, index=False)
-    print(f"CSV backups written to {DATA_DIR}")
+    # Snapshot CSVs accumulate one day per run, keyed like their tables, so a rerun replaces that day.
+    for df_today, path, key in [(df_video_snapshot, VIDEO_SNAPSHOTS_PATH, "video_id"),
+                                (df_channel_snapshot, CHANNEL_SNAPSHOTS_PATH, "channel_id")]:
+        df_all = df_today.astype({"snapshot_date": str})
+        if os.path.exists(path):
+            df_all = pd.concat([pd.read_csv(path), df_all], ignore_index=True)
+        df_all.drop_duplicates([key, "snapshot_date"], keep="last").to_csv(path, index=False)
+    print(f"CSV copies written to {DATA_DIR}")
 
 print(f"Done: {len(df_channels)} channels, {len(df_videos)} videos refreshed ({len(new_ids)} new), "
       f"{len(df_video_snapshot)} video and {len(df_channel_snapshot)} channel snapshot rows for {now.date()}.")
