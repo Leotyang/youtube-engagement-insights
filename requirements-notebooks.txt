@@ -1,0 +1,6 @@
+# Extra packages for the notebooks in notebooks/ (install on top of requirements.txt)
+-r requirements.txt
+scikit-learn
+matplotlib
+db-dtypes
+jupyter

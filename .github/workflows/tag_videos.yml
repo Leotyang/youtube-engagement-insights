@@ -18,8 +18,6 @@ on:
         description: "Only print the queue and cost estimate"
         type: boolean
         default: false
-  push:   # TEMPORARY: each push runs the full queue (up to the per-run spend/runtime caps); remove before merging to main
-    branches: [leotyang/pipeline]
 
 permissions:
   contents: read

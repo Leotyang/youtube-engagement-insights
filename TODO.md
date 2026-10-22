@@ -3,7 +3,7 @@
 Working notes for the next stage after YouTube ingestion. See [README.md](README.md) for
 the project overview and [CLAUDE.md](CLAUDE.md) for the status log.
 
-Last updated: 2026-10-15 (tagger rebuilt on Vertex AI / gemini-3.1-flash-lite)
+Last updated: 2026-10-21 (daily snapshots; channel list synced with the sheet)
 
 ---
 
@@ -24,10 +24,15 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [x] Ingest writes channels/videos/engagement_snapshots to BigQuery from the Google Sheet creator list (one row per video, scraped once at 3+ days old, `age_days_at_pull` stored; local run done 2026-10-15; GitHub secrets + first Actions run pending)
 - [ ] Backfill `llm_tagged` for the first sample: 50 most recent videos per channel, <= 30 min, CNBC skipped (~1,980 videos, ~$21); 3 tagged in the local test
 - [ ] Add GitHub secret `GOOGLE_SERVICE_ACCOUNT_JSON` (+ `YOUTUBE_API_KEY`); check the first push-triggered Actions runs
-- [ ] Remove the TEMPORARY `push:` trigger in `tag_videos.yml` (the one in `ingest_videos.yml` is already gone), then merge to `main` so the nightly schedule and "Run workflow" button work
+- [x] Remove the TEMPORARY `push:` trigger in `tag_videos.yml` (2026-10-21)
+- [ ] Merge the pipeline to `main` so the nightly schedules run (nothing has run on a schedule since 2026-10-15: `main` has no workflows); untrack `data/` first (`git rm -r --cached data`)
+- [x] On The Radar Radio, CNBC, Apple, Bloomberg Originals removed from the sheet; ingest deleted their rows from every table (2026-10-21)
+- [ ] Decide a brand vs independent-creator rule: triple j (ABC radio, 768 videos/yr, ~11K median views on 2.1M subs) looks like On The Radar Radio; Architectural Digest is Condé Nast like the removed Bon Appétit; Jubilee, First We Feast, Cut are media companies
+- [ ] Wayne Hu (@nogatekeepers) has no uploads in the past year (contributes no videos); Stavvy's World still has a search link instead of a channel link
 - [ ] Decide sampling for later batches: most recent X vs evenly spread over the year (prolific channels' 50 newest span only days)
-- [ ] Re-run the human-vs-model comparison once teammates' manual tags are in; convert the 4 Binary traits' human scores (tagged on 0-4) to 0/1 first
-- [ ] Do some EDAs of our list of creators and their videos
+- [x] AI vs manual comparison on the 5 hand-tagged videos in our data: `notebooks/03_ai_vs_manual.ipynb` (64% exact, 86% within 1, MAE 0.55, presence F1 0.76; worst: Production, Audience Hooks, Tone). The 3 manual videos outside the tagging queue were tagged as a one-off on 2026-10-15
+- [ ] Re-run it as teammates add manual tags (the 6th manual video, the Abandoned Church one, is not in our scrape)
+- [x] EDA of creators and videos: `notebooks/00_eda_charts.ipynb` reproduces the EDA slides (2026-10-15); training subset = videos tagged before `config.ANALYSIS_TAGGED_BEFORE` (3:30 PT Oct 15, 726 videos)
 
 **Phase I deliverables**
 - [ ] Form team roles (business framing, data/context, methods, AI-assisted implementation, verification, stakeholder communication)
@@ -42,6 +47,15 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] Build the trait taxonomy (content, format, hashtags, creator background, theme, industry)
 - [ ] Run the trait-tagging pipeline on a sample and spot-check against human tags (pilot on 5 videos done 2026-10-15: flash-lite 64% exact / 83% presence agreement vs 68% all-zeros baseline; Flash over-flags)
 - [ ] Build the engagement model (traits → views/likes/comments)
+  - [x] Baseline: plain OLS, no scaling/regularization/selection, `notebooks/01_baseline_linear_regression.ipynb` (2026-10-15). Random 20% test + 5-fold CV on the 80%: train R2 ~0.88, CV R2 negative for all targets (overfits)
+  - [x] Tag dummies added to the baseline (57 YouTube tags used in >= 50 videos and >= 3 channels)
+  - [ ] Handle sparse trait levels: compare one-hot vs ordinal 0-4 vs coarser levels (absent / minor / major) vs present-only; drop near-constant traits
+  - [x] Lasso with scaling and a CV-chosen penalty: `notebooks/02_lasso.ipynb` (log views test R2 0.19 -> 0.66, CV 0.62; keeps 118 of 372 columns)
+  - [ ] Ridge / elastic net for comparison; multicollinearity check (correlated trait pairs) deferred
+  - [ ] Evaluate on held-out channels (grouped CV), not only random rows
+  - [ ] Re-run when tagging finishes (~1,980 videos): move `ANALYSIS_TAGGED_BEFORE` in `config.py` and rerun notebooks 00-03. Note: `videos` counts are now refreshed nightly, so the Oct 15 results reproduce only from the 2026-10-15 snapshot partition
+- [x] Daily snapshots: `video_daily_snapshots` and `channel_daily_snapshots` (one row per video / channel per day, date-partitioned, written by ingest; seeded with the 2026-10-15 pulls) (2026-10-21)
+- [ ] Age normalization: after 3-4 weeks of snapshots, estimate growth curves (Shorts vs long-form) and normalize views to a reference age; meanwhile try a channel-relative, age-adjusted log-views target
 - [ ] Build the audience preference/segment model
 - [ ] Build the optimization model (best trait combination per creator)
 - [ ] Design the correlation-to-causal identification strategy

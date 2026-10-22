@@ -15,28 +15,34 @@ SHEET_ID = "1Kj8agduMgsqmKxH6e_7Bhzcbthilx9GxStnHAIUX3Ew"
 SHEET_TAB = "Channel Selection"
 TRAITS_TAB = "Content Traits"
 
-# BigQuery destination for ingest.py; tables channels, videos, engagement_snapshots.
+# BigQuery destination. Set BQ_DATASET=youtube_dev in the environment to run any script against a
+# separate dev dataset (created on first use) instead of the production tables.
 GCP_PROJECT_ID = "dso-585-project-16336"
-BQ_DATASET = "youtube"
+BQ_DATASET = os.getenv("BQ_DATASET", "youtube")
 BQ_LOCATION = "US"
 
 # Only videos published within this window are pulled (uploads are paged newest-first
 # and paging stops at the cutoff). A channel posting daily costs ~15 quota units per run.
 LOOKBACK_DAYS = 365
 
-# A video is scraped exactly once, the first run after it is this many days old, so its
-# engagement is measured at a similar age (age_days_at_pull records the exact age). Newer
-# videos are skipped until they mature; videos already in BigQuery are never re-scraped.
-MIN_VIDEO_AGE_DAYS = 3
+# Ingest deletes every row of a channel that is no longer on the sheet. Snapshot history can't be
+# re-pulled, so a run that would remove more channels than this stops instead (likely a sheet
+# mistake); pass --allow-mass-removal to go ahead.
+MAX_CHANNELS_REMOVED_PER_RUN = 5
 
 # Where CSVs go. Default is data/raw inside the repo (gitignored). To share with the team,
 # point this at a Google Drive for Desktop folder instead, e.g.
 # DATA_DIR = os.path.expanduser("~/Library/CloudStorage/GoogleDrive-<acct>/My Drive/DSO 585/Project/data")
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "raw")
 VIDEOS_PATH = os.path.join(DATA_DIR, "videos.csv")
-SNAPSHOTS_PATH = os.path.join(DATA_DIR, "engagement_snapshots.csv")
+VIDEO_SNAPSHOTS_PATH = os.path.join(DATA_DIR, "video_daily_snapshots.csv")
 CHANNELS_PATH = os.path.join(DATA_DIR, "channels.csv")
 LLM_TAGGED_PATH = os.path.join(os.path.dirname(DATA_DIR), "interim", "llm_tagged.csv")
+MODEL_MATRIX_PATH = os.path.join(os.path.dirname(DATA_DIR), "processed", "model_matrix.csv")
+
+# Analysis freeze: notebooks use only videos with llm_tagged.tagged_at before this instant, so results stay
+# reproducible while the nightly tagger keeps adding rows. 2026-10-15 15:30 PT.
+ANALYSIS_TAGGED_BEFORE = "2026-10-15 22:30:00 UTC"
 
 # Channels to leave out of trait tagging (ingest still pulls them, e.g. for EDA). Keyed by
 # YouTube channel id -> why; their traits wouldn't be something a creator can act on.

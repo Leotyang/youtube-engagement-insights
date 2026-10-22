@@ -63,6 +63,66 @@ def set_column_descriptions(client, table_name, descriptions):
     client.update_table(table, ["schema"])
 
 
+SNAPSHOT_TABLES_DDL = """
+CREATE TABLE IF NOT EXISTS `{dataset}.video_daily_snapshots` (
+  snapshot_date DATE NOT NULL OPTIONS(description="UTC date of the pull; the partition key"),
+  snapshot_at TIMESTAMP NOT NULL OPTIONS(description="Exact time of the pull (runs are ~24 h apart, not exactly)"),
+  video_id STRING NOT NULL,
+  channel_id STRING,
+  published_at TIMESTAMP,
+  age_days FLOAT64 OPTIONS(description="Days between publish and snapshot_at"),
+  view_count INT64 OPTIONS(description="Lifetime views at snapshot_at (cumulative: diff consecutive days for daily gain)"),
+  like_count INT64 OPTIONS(description="Lifetime likes; NULL when the creator hides likes"),
+  comment_count INT64 OPTIONS(description="Lifetime comments; NULL when comments are off"),
+  is_available BOOL NOT NULL OPTIONS(description="FALSE when the API no longer returns the video (deleted or private)")
+)
+PARTITION BY snapshot_date
+CLUSTER BY channel_id, video_id
+OPTIONS(description="Periodic snapshot fact table: one row per video per day");
+
+CREATE TABLE IF NOT EXISTS `{dataset}.channel_daily_snapshots` (
+  snapshot_date DATE NOT NULL,
+  snapshot_at TIMESTAMP NOT NULL,
+  channel_id STRING NOT NULL,
+  channel_title STRING,
+  subscriber_count INT64 OPTIONS(description="Rounded by YouTube to 3 significant figures; NULL when hidden"),
+  view_count INT64,
+  video_count INT64
+)
+PARTITION BY snapshot_date
+CLUSTER BY channel_id
+OPTIONS(description="Periodic snapshot fact table: one row per channel per day");
+"""
+
+
+def ensure_snapshot_tables(client):
+    """Create the daily snapshot tables (date-partitioned, explicit schema) if they don't exist."""
+    client.query(SNAPSHOT_TABLES_DDL.format(dataset=f"{GCP_PROJECT_ID}.{BQ_DATASET}")).result()
+
+
+def write_partition(client, table_name, df, partition_date):
+    """Replace one day's partition of a date-partitioned table with df. Rerunning a day overwrites that day
+    instead of appending duplicates, so a failed or repeated run is safe to replay."""
+    table = client.get_table(f"{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}")
+    job_config = bigquery.LoadJobConfig(schema=table.schema, write_disposition="WRITE_TRUNCATE")
+    destination = f"{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}${partition_date:%Y%m%d}"
+    client.load_table_from_dataframe(df, destination, job_config=job_config).result()
+    print(f"BigQuery: wrote {len(df)} rows to {table_name} partition {partition_date}")
+
+
+def delete_channel_rows(client, table_name, channel_column, channel_ids):
+    """Delete every row of the given channels from a table; a table that doesn't exist yet is skipped."""
+    try:
+        job = client.query(
+            f"DELETE FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}` WHERE {channel_column} IN UNNEST(@channel_ids)",
+            job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ArrayQueryParameter("channel_ids", "STRING", channel_ids)]),
+        )
+        job.result()
+        print(f"BigQuery: deleted {job.num_dml_affected_rows} rows from {table_name}")
+    except NotFound:
+        pass
+
+
 def write_table(client, table_name, df, mode):
     """mode: 'replace' (overwrite table), 'append', or 'upsert' (delete rows whose `id` is in df, then append)."""
     table_id = f"{GCP_PROJECT_ID}.{BQ_DATASET}.{table_name}"

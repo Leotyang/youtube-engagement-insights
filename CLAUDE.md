@@ -62,12 +62,62 @@ preference data to make videos that increase viewership and engagement?
 - How to translate model output into an actionable intervention on a specific video
 - LLM-as-recommender vs. ML+optimization pipeline comparison
 
+## Personal goal (Leo): data-engineering practice
+
+Leo is using this project to practice data engineering. When suggesting or designing anything, consider
+where real data-engineering practice applies: data modeling (raw/staging/mart layers, table grain), dbt
+transformations and tests, dev/prod separation, CI/CD for the pipeline, containerization, orchestration,
+idempotent and backfillable jobs, data quality checks, and versioning of data, tags and models. Prefer
+approaches that solve a real project need over tooling for its own sake, and keep GCP cost in mind
+(the team runs on the $300 credit).
+
 ## Status log
 
 Update this section (newest entry on top) as the project progresses — data sources
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-10-21:** Ingest rebuilt around daily snapshots. Each nightly run: deletes every row (videos,
+  engagement_snapshots, llm_tagged, snapshot tables) of channels no longer on the sheet (stops if > 5 would go;
+  `--allow-mass-removal`), replaces `channels`, discovers new videos at any age (the 3-day wait is gone),
+  re-fetches every known video (videos.list, ~265 calls for 13K videos), upserts `videos` (latest metadata and
+  counts; `pulled_at`/`age_days_at_pull` = this pull, new `first_pulled_at` = first pull), and overwrites today's
+  partition of `video_daily_snapshots` (grain video x day, `is_available` flags deleted/private videos) and
+  `channel_daily_snapshots` (grain channel x day). Kimball calls these periodic snapshot fact tables (not SCD:
+  SCD types track changing dimension attributes). Partition overwrite makes reruns idempotent (verified).
+  `src/seed_snapshots.py` copied the 2026-10-15 one-time pulls in as day one; `engagement_snapshots` is legacy.
+  `BQ_DATASET=youtube_dev` runs any script against a dev dataset (tested there first, via table clones). Sheet
+  sync removed CNBC, On The Radar Radio, Apple, Bloomberg Originals (20,236 videos, 150 tagged) and added Hasan
+  Minhaj, Midwest Safety, Kelly Wakasa, SauccEats, Tom Scott (+1,164 videos) and Wayne Hu (no videos in the past
+  year). Now 52 channels, 13,188 videos. New-channel EDA in `00_eda_charts`: all fit inside the existing ranges.
+  Temporary push trigger removed from `tag_videos.yml`; `data/` gitignored (CSVs still tracked until untracked).
+- **2026-10-15 (evening, deck):** Analysis frozen at `config.ANALYSIS_TAGGED_BEFORE` (3:30 PT, 726 tagged videos,
+  48 channels); the tagger keeps running. Evaluation everywhere: random 20% test, 5-fold CV on the other 80%.
+  Plain OLS (372 one-hot columns) overfits: log views train R2 0.89 vs test 0.19 (CV -0.25); adding feature groups
+  raises train but not test. Lasso (standardized, alpha by CV) generalizes: log views test 0.66 / CV 0.62 with 118
+  columns. Raw-count targets are unstable on any single split (Lasso keeps 2 columns). The OLS query had no ORDER BY,
+  so the positional 80/20 split changed every run; fixed with ORDER BY id (earlier numbers were not reproducible).
+  The "music performance = 4" coefficient is mostly On The Radar Radio (23 of 34 such videos), a clip channel with
+  ~1.5K median views on 1.86M subs; whether to skip it like CNBC is open. Multicollinearity work deferred. AI vs manual
+  tags (`03_ai_vs_manual`): 64% exact, 86% within 1, MAE 0.55, presence F1 0.76; AI scores higher on average.
+  Notebooks 01-03 save results to `data/processed/`; the deck's model slides read from there.
+- **2026-10-15 (end of day):** Added `notebooks/00_eda_charts.ipynb` (reproduces every EDA slide chart from
+  BigQuery; genre = YouTube categoryId mapped via videoCategories.list, channel genre = its most common
+  category). Baseline notebook now also has 57 YouTube-tag dummies (vocabulary = tags in >= 50 videos and >= 3
+  channels across the whole dataset, so single-channel tags are excluded): 372 columns for ~410 train rows.
+  Trait levels are sparse (of 300 dummies, 129 have < 20 videos), so the next step is to compare encodings
+  (one-hot vs ordinal vs coarse vs present-only) with regularization and grouped-by-channel CV.
+  Lesson: ask before assuming what an abbreviation means (V/C was views/comments, not views/channel).
+- **2026-10-15 (late):** Baseline modeling notebook `notebooks/01_baseline_linear_regression.ipynb`: joins
+  `llm_tagged` + `videos` + `channels`, one-hot encodes the 75 Linear (0-4) traits (level 0 = reference),
+  keeps the 4 Binary traits as 0/1, adds 11 numeric metadata columns (duration, age at scrape, subscribers,
+  publish hour/weekday, title/description length, tag count, HD, caption, paid placement) and fits plain
+  OLS to views, log(1+views), likes, log(1+likes). On ~450 tagged videos it has ~315 columns for ~360 train
+  rows, so it memorizes (train R2 0.96-0.98) and fails out of sample (test R2 -3 to -30): the expected
+  starting point for regularization. Gotcha: sklearn's LinearRegression silently drops to rank 3 on this
+  unscaled matrix (subscribers ~5e8 vs 0/1 dummies), so the notebook solves OLS with `np.linalg.lstsq`.
+  EDA slides restructured into All Channels / All Videos / Training Subset: Channels / Training Subset:
+  Videos (native Slides charts, numbers computed from BigQuery).
 - **2026-10-15 (night):** The 8-parallel GitHub run still hit many 429s (Google's shared capacity, not our
   quota; synchronized 30-240 s backoffs idled the workers) and one unretried `RemoteProtocolError`.
   Fixes: retry connection errors, jittered 10-80 s backoff (5 attempts), 5 parallel requests, BigQuery

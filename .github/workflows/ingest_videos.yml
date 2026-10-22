@@ -1,5 +1,7 @@
-# Nightly: read the creator Google Sheet, pull channels/videos/engagement from YouTube, and
-# load BigQuery. Trait tagging is the separate "Tag videos" workflow, an hour later.
+# Nightly: sync the creator list from the Google Sheet (channels removed from the sheet are deleted from
+# BigQuery), add new videos, refresh every video's metadata, and write today's partition of
+# video_daily_snapshots and channel_daily_snapshots. Trait tagging is the separate "Tag videos"
+# workflow, an hour later.
 # Runs on the default branch only (GitHub cron rule). Trigger manually via "Run workflow".
 name: Ingest videos
 
