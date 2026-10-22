@@ -12,7 +12,7 @@ living memory across sessions — future sessions (yours or a teammate's) should
 able to read this file and understand where the project actually stands, not where it
 stood at the start.
 
-**Always keep the [README.md](README.md) TODO list in sync with actual project
+**Always keep the [TODO.md](TODO.md) task list in sync with actual project
 status.** Whenever a task in that list is started, finished, or a new task is
 identified, update the TODO list in the same change — check off `[x]` completed
 items, add new items as they come up, and remove/rewrite items that are no longer
@@ -62,12 +62,144 @@ preference data to make videos that increase viewership and engagement?
 - How to translate model output into an actionable intervention on a specific video
 - LLM-as-recommender vs. ML+optimization pipeline comparison
 
+## Personal goal (Leo): data-engineering practice
+
+Leo is using this project to practice data engineering. When suggesting or designing anything, consider
+where real data-engineering practice applies: data modeling (raw/staging/mart layers, table grain), dbt
+transformations and tests, dev/prod separation, CI/CD for the pipeline, containerization, orchestration,
+idempotent and backfillable jobs, data quality checks, and versioning of data, tags and models. Prefer
+approaches that solve a real project need over tooling for its own sake, and keep GCP cost in mind
+(the team runs on the $300 credit).
+
 ## Status log
 
 Update this section (newest entry on top) as the project progresses — data sources
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-10-21:** Ingest rebuilt around daily snapshots. Each nightly run: deletes every row (videos,
+  engagement_snapshots, llm_tagged, snapshot tables) of channels no longer on the sheet (stops if > 5 would go;
+  `--allow-mass-removal`), replaces `channels`, discovers new videos at any age (the 3-day wait is gone),
+  re-fetches every known video (videos.list, ~265 calls for 13K videos), upserts `videos` (latest metadata and
+  counts; `pulled_at`/`age_days_at_pull` = this pull, new `first_pulled_at` = first pull), and overwrites today's
+  partition of `video_daily_snapshots` (grain video x day, `is_available` flags deleted/private videos) and
+  `channel_daily_snapshots` (grain channel x day). Kimball calls these periodic snapshot fact tables (not SCD:
+  SCD types track changing dimension attributes). Partition overwrite makes reruns idempotent (verified).
+  `src/seed_snapshots.py` copied the 2026-10-15 one-time pulls in as day one; `engagement_snapshots` is legacy.
+  `BQ_DATASET=youtube_dev` runs any script against a dev dataset (tested there first, via table clones). Sheet
+  sync removed CNBC, On The Radar Radio, Apple, Bloomberg Originals (20,236 videos, 150 tagged) and added Hasan
+  Minhaj, Midwest Safety, Kelly Wakasa, SauccEats, Tom Scott (+1,164 videos) and Wayne Hu (no videos in the past
+  year). Now 52 channels, 13,188 videos. New-channel EDA in `00_eda_charts`: all fit inside the existing ranges.
+  Temporary push trigger removed from `tag_videos.yml`; `data/` gitignored (CSVs still tracked until untracked).
+- **2026-10-15 (evening, deck):** Analysis frozen at `config.ANALYSIS_TAGGED_BEFORE` (3:30 PT, 726 tagged videos,
+  48 channels); the tagger keeps running. Evaluation everywhere: random 20% test, 5-fold CV on the other 80%.
+  Plain OLS (372 one-hot columns) overfits: log views train R2 0.89 vs test 0.19 (CV -0.25); adding feature groups
+  raises train but not test. Lasso (standardized, alpha by CV) generalizes: log views test 0.66 / CV 0.62 with 118
+  columns. Raw-count targets are unstable on any single split (Lasso keeps 2 columns). The OLS query had no ORDER BY,
+  so the positional 80/20 split changed every run; fixed with ORDER BY id (earlier numbers were not reproducible).
+  The "music performance = 4" coefficient is mostly On The Radar Radio (23 of 34 such videos), a clip channel with
+  ~1.5K median views on 1.86M subs; whether to skip it like CNBC is open. Multicollinearity work deferred. AI vs manual
+  tags (`03_ai_vs_manual`): 64% exact, 86% within 1, MAE 0.55, presence F1 0.76; AI scores higher on average.
+  Notebooks 01-03 save results to `data/processed/`; the deck's model slides read from there.
+- **2026-10-15 (end of day):** Added `notebooks/00_eda_charts.ipynb` (reproduces every EDA slide chart from
+  BigQuery; genre = YouTube categoryId mapped via videoCategories.list, channel genre = its most common
+  category). Baseline notebook now also has 57 YouTube-tag dummies (vocabulary = tags in >= 50 videos and >= 3
+  channels across the whole dataset, so single-channel tags are excluded): 372 columns for ~410 train rows.
+  Trait levels are sparse (of 300 dummies, 129 have < 20 videos), so the next step is to compare encodings
+  (one-hot vs ordinal vs coarse vs present-only) with regularization and grouped-by-channel CV.
+  Lesson: ask before assuming what an abbreviation means (V/C was views/comments, not views/channel).
+- **2026-10-15 (late):** Baseline modeling notebook `notebooks/01_baseline_linear_regression.ipynb`: joins
+  `llm_tagged` + `videos` + `channels`, one-hot encodes the 75 Linear (0-4) traits (level 0 = reference),
+  keeps the 4 Binary traits as 0/1, adds 11 numeric metadata columns (duration, age at scrape, subscribers,
+  publish hour/weekday, title/description length, tag count, HD, caption, paid placement) and fits plain
+  OLS to views, log(1+views), likes, log(1+likes). On ~450 tagged videos it has ~315 columns for ~360 train
+  rows, so it memorizes (train R2 0.96-0.98) and fails out of sample (test R2 -3 to -30): the expected
+  starting point for regularization. Gotcha: sklearn's LinearRegression silently drops to rank 3 on this
+  unscaled matrix (subscribers ~5e8 vs 0/1 dummies), so the notebook solves OLS with `np.linalg.lstsq`.
+  EDA slides restructured into All Channels / All Videos / Training Subset: Channels / Training Subset:
+  Videos (native Slides charts, numbers computed from BigQuery).
+- **2026-10-15 (night):** The 8-parallel GitHub run still hit many 429s (Google's shared capacity, not our
+  quota; synchronized 30-240 s backoffs idled the workers) and one unretried `RemoteProtocolError`.
+  Fixes: retry connection errors, jittered 10-80 s backoff (5 attempts), 5 parallel requests, BigQuery
+  writes buffered every 10 videos / 2 min (one write per video would hit the ~1,500 load jobs per table per
+  day limit; a cancelled run flushes on exit), pandas-gbq warning silenced. Removed the temporary push
+  trigger from `ingest_videos.yml`; the one in `tag_videos.yml` stays until the backfill finishes.
+- **2026-10-15 (evening):** First full GitHub tagging run was slow: 294 videos in 4 h (74/h) because
+  about half of the 3-video requests failed (Vertex 504 / 429) and fell back to one video at a time.
+  Cancelled it (nothing lost: results save per request, and the queue skips anything already in
+  `llm_tagged`). Switched to 1 video per request and 8 in parallel: local test tagged 16 videos in 3.2
+  min (~300/h, a few 429s retried fine). ~376+ videos tagged so far of ~1,980. Open question for the
+  professor logged in TODO.md: how to account for each video's different maturity (age at scrape).
+- **2026-10-15 (later):** Tagger rebuilt and live on Vertex AI (Agent Platform) with
+  `gemini-3.1-flash-lite` (location `global`, service-account auth; Gemini API key dropped after its
+  prepaid credit hit $0). Pilot on the 5 human-tagged videos: flash-lite ~3x cheaper than
+  gemini-3.8-flash and closer to human tags (64% exact / 83% presence vs Flash 29% / 48%; all-zeros
+  baseline 68%), ~91 tokens per video-second, 3 videos per request OK. Traits (79, Linear 0-4 / Binary
+  0/1) now come from the sheet via `src/traits.py`; results append to BigQuery `youtube.llm_tagged`
+  (one row per video, trait columns described in the schema; no prompt versioning, a `traits_hash`
+  check blocks tagging if the sheet's trait list changes). Queue: videos <= 30
+  min, 50 most recent per channel, CNBC skipped (`TAGGING_SKIP_CHANNELS`): ~1,980 videos, ~$21. New
+  workflow `tag_videos.yml` (nightly 10:00 UTC + temporary push trigger tagging 3 videos). Local test
+  tagged 3 videos.
+- **2026-10-15:** Ingest redesigned to scrape each video exactly once. Public YouTube Data API
+  only has lifetime cumulative counts (windowed metrics need the Analytics API + channel-owner
+  OAuth), so we approximate a fixed window: a video is pulled only once it is `MIN_VIDEO_AGE_DAYS`
+  (=3, `config.py`) old and not already in BigQuery, and `age_days_at_pull` is stored. `videos` and
+  `engagement_snapshots` are both one row per video, joined on `id` (no snapshot history). Existing
+  backfill (pre-redesign) was scraped at ages 1-365 days: control for age in models. Tables and
+  CSVs were dropped and rebuilt with the new logic on 2026-10-15.
+- **2026-10-14:** Ingest now reads the creator list from the team Google Sheet (native Sheet,
+  tab `Channel Selection`, via service account / ADC) and loads BigQuery (`dso-585-project-16336`,
+  dataset `youtube`, tables `channels` replace, `videos` upsert on id, `engagement_snapshots`
+  append). `python src/ingest.py --env local` also writes CSV backups; `--env github` is
+  BigQuery-only. Dots in column names become underscores in BigQuery. Offline-tested only
+  (mocked client); first live run pending. Tagger still reads CSVs, so it is next to migrate.
+  Trait proposal (78 traits in 5 categories) in `trait_proposal.tsv`; modeling plan is to
+  tag every video on every trait and let elastic-net regularization select.
+- **2026-09-29 (night):** First live Gemini run succeeded: 4 videos scored on the placeholder
+  traits, scores look sensible (MKBHD reviews → product_review 3, high_production 3). Found
+  the real free-tier constraint: `gemini-3.8-flash` is capped at **20 requests/day**, far
+  tighter than the 8h-of-video rule → ~16 nightly runs for the 315-video baseline. Options
+  in TODO.md (check other models' limits in AI Studio, or ~$10 paid). Fix: tagger now batches up to 10 videos / 2h per request (API allows 10 YouTube URLs per
+  request; video blocks named by ID, response schema keyed by ID), so the 8h/day video rule
+  is binding again. Retries 503/429 with backoff. 7 videos tagged so far.
+- **2026-09-29 (later):** Tagging pipeline scaffolded on the free tier: `src/traits.py`
+  (placeholder traits + universal 0-4 scale), `src/tag_videos.py` (Gemini
+  `interactions.create` with the YouTube URL as a video block and a JSON response schema;
+  resumable, budget- and 429-aware), `.github/workflows/tag_videos.yml` (nightly ingest +
+  tag + commit CSVs). Decision: data CSVs are now tracked in git so the Actions runner has
+  storage. Untested against the live API — `GEMINI_API_KEY` not yet created. Setup steps in
+  TODO.md → "To activate".
+- **2026-09-29:** Ingestion branch `leotyang/youtube_ingestion` pushed. Next stage is trait
+  tagging; plan, engine decision (Gemini API with direct YouTube URLs), universal 0–4 trait
+  scale, content-cache decision (thumbnails yes, transcripts deferred), scheduling advice,
+  and the team's open TODOs are written up in [TODO.md](TODO.md). Team is drafting the
+  channel list and trait definitions; tagging pipeline not started.
+- **2026-09-28 (night):** First real data pull succeeded. Channels are now given as URLs
+  (`CHANNEL_URLS` in `src/config.py`); `youtube_api.py` resolves `@handle`, `/channel/UC…`,
+  and `/user/…` URLs via `channels.list` filters (`forHandle`, `id`, `forUsername`; legacy
+  `/c/` URLs are unsupported). Output keeps every API field an API key can access,
+  flattened to dotted columns (57 video columns, 42 channel columns) plus
+  `duration_seconds` and `pulled_at`. Scope per channel is a rolling window (`LOOKBACK_DAYS = 365`), not a fixed
+  count. Test pull: MrBeast, MKBHD, Nick DiGiovanni, 315 videos from the past year → `data/raw/channels.csv`, `videos.csv`, `engagement_snapshots.csv`
+  (gitignored). Decision: keep working in this repo for now; migrating to Colab + Drive
+  only if teammates need to run the pull themselves.
+- **2026-09-28 (evening):** Scope trimmed back to data collection only; modeling and LLM
+  tagging are not started and their scaffolds were removed. Colab/Drive publishing dropped;
+  the pipeline runs locally. `src/` is three plain scripts: `config.py` (`CHANNELS` dict
+  name -> channel ID, `DATA_DIR`, key from .env), `youtube_api.py` (channels -> uploads
+  playlist -> video IDs -> metadata/engagement; run it with an `@handle` to print a channel
+  ID), `ingest.py` (writes `videos.csv` + appends `engagement_snapshots.csv`). Storage is
+  CSV; `DATA_DIR` can be pointed at a Google Drive for Desktop folder to share with the team.
+- **2026-09-28 (later):** Agreed a module layout: one script per pipeline stage in
+  `src/`, modules exchange CSVs in `data/raw` → `interim` → `processed`. Scaffolded the
+  first stage: `src/config.py` (channel list + paths + `.env` loading),
+  `src/youtube_api.py` (channels → uploads playlist → video IDs → metadata/engagement
+  via the Data API v3 REST endpoints with `requests`), and `src/ingest.py` (saves
+  `videos.csv` master list and appends per-run `engagement_snapshots.csv` so engagement
+  can be tracked over time). `.env.example` added; API key still pending. New near-term
+  TODOs from the team (Jira board, channel selection, black-box engagement~views model,
+  LLM tagging/embedding research) added to README.
 - **2026-09-28:** Consolidated three separate Claude Code CLI sessions that had been
   running against this same repo folder into this one. Two of the three had drifted
   into session-management housekeeping (relocating a session transcript between

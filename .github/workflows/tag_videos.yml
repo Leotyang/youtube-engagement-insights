@@ -1,0 +1,61 @@
+# Nightly: tag the next videos in the queue with Gemini (Vertex AI) and append the scores to
+# BigQuery youtube.llm_tagged. Runs an hour after "Ingest videos" so new videos get picked up.
+# State lives in BigQuery, so nothing is committed back. Per-run caps (spend, runtime, videos
+# per channel) are in src/config.py.
+# Schedule and the "Run workflow" button only work once this file is on the default branch.
+name: Tag videos
+
+on:
+  schedule:
+    - cron: "0 10 * * *"   # 10:00 UTC daily = 03:00 PT
+  workflow_dispatch:
+    inputs:
+      max_videos:
+        description: "Tag at most this many videos (blank = whole queue, up to the spend cap)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Only print the queue and cost estimate"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Never run two taggers at once (they would pick the same queue).
+concurrency:
+  group: tag-videos
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      PYTHONUNBUFFERED: "1"   # print progress to the Actions log live, not when the job ends
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Write Google service-account key
+        env:
+          GCP_KEY_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          printf '%s' "$GCP_KEY_JSON" > "$RUNNER_TEMP/gcp-key.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp-key.json" >> "$GITHUB_ENV"
+
+      - name: Tag videos with Gemini
+        env:
+          MAX_VIDEOS: ${{ inputs.max_videos }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          ARGS="--env github"
+          if [ -n "$MAX_VIDEOS" ]; then ARGS="$ARGS --max-videos $MAX_VIDEOS"; fi
+          if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          python src/tag_videos.py $ARGS
