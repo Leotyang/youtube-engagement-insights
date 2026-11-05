@@ -77,6 +77,12 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-11-05:** Human vs AI tag evaluation added in `human_vs_ai_eval/` (Tiana). 21 human-tagged videos:
+  production flash-lite κ 0.68 vs humans, gemini-3.8-flash κ 0.78 (13 videos so far); BigQuery production tags match
+  our re-runs (κ 0.92). Per-trait triage by Kendall's τ-b (Austin, 2026-11-04): 17 trust, 31 review, 15 drop or
+  redefine, 16 too rare. MC-SIMEX on 2,826 production-tagged videos: AI tag error shrinks trait effects (~1.8x after
+  correction), top-10 drivers keep their sign; with channel fixed effects only 10 traits stay significant (32
+  without). Data stays out of git (BigQuery export query in `human_vs_ai_eval/bq_export.sql`).
 - **2026-10-22:** Repo made public (linked from Leo's resume). README rewritten as a manual (overview, status,
   Mermaid pipeline, the two workflows, data counts, early results, setup, structure); the original proposal moved
   to `docs/PROPOSAL.md`. GIT_WORKFLOW.md § 8 covers reading Actions logs, rerunning, and common failures.
