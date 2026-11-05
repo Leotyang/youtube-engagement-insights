@@ -3,7 +3,7 @@
 Working notes for the next stage after YouTube ingestion. See [README.md](README.md) for
 the project overview and [CLAUDE.md](CLAUDE.md) for the status log.
 
-Last updated: 2026-10-22 (public repo, README rewrite)
+Last updated: 2026-11-05 (human vs AI evaluation: per-trait triage, downstream test)
 
 ---
 
@@ -39,7 +39,13 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] Wayne Hu (@nogatekeepers) has no uploads in the past year (contributes no videos); Stavvy's World still has a search link instead of a channel link
 - [ ] Decide sampling for later batches: most recent X vs evenly spread over the year (prolific channels' 50 newest span only days)
 - [x] AI vs manual comparison on the 5 hand-tagged videos in our data: `notebooks/03_ai_vs_manual.ipynb` (64% exact, 86% within 1, MAE 0.55, presence F1 0.76; worst: Production, Audience Hooks, Tone). The 3 manual videos outside the tagging queue were tagged as a one-off on 2026-10-15
-- [ ] Re-run it as teammates add manual tags (the 6th manual video, the Abandoned Church one, is not in our scrape)
+- [x] Re-run it as teammates add manual tags: 21 videos in `human_vs_ai_eval/` (2026-11-05). flash-lite κ 0.68, gemini-3.8-flash κ 0.78 (13 videos so far); production tags match our re-runs (κ 0.92)
+- [x] Per-trait triage (Kendall τ-b, from the 2026-11-04 meeting with Austin): 17 trust / 31 review / 15 drop or redefine / 16 too rare (`human_vs_ai_eval/trait_triage.py`)
+- [x] Downstream test of tag error on the real data (MC-SIMEX, 2,826 videos): trait effects understated ~1.8x, top-10 drivers keep their sign (`human_vs_ai_eval/real_downstream.py`)
+- [ ] Rewrite the definitions of Promotional and Face on Camera (unreliable with both models; both are top-10 drivers)
+- [ ] Double-tag 5 videos blind for a human-vs-human ceiling; add a "Tagged by" row to the Manual Tagging tab
+- [ ] Decide whether to re-tag with gemini-3.8-flash (cost for ~2,800 videos)
+- [ ] 151 `llm_tagged` rows don't join to `videos`/`channels` (2,978 tagged, 2,827 joined on 2026-11-05)
 - [x] EDA of creators and videos: `notebooks/00_eda_charts.ipynb` reproduces the EDA slides (2026-10-15); training subset = videos tagged before `config.ANALYSIS_TAGGED_BEFORE` (3:30 PT Oct 15, 726 videos)
 
 **Phase I deliverables**

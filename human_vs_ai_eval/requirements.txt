@@ -1,0 +1,8 @@
+pandas
+numpy
+scipy
+scikit-learn
+krippendorff
+matplotlib
+google-genai     # only for tag_videos_eval.py
+python-dotenv    # only for tag_videos_eval.py
