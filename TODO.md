@@ -45,7 +45,7 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] Rewrite the definitions of Promotional and Face on Camera (unreliable with both models; both are top-10 drivers)
 - [ ] Double-tag 5 videos blind for a human-vs-human ceiling; add a "Tagged by" row to the Manual Tagging tab
 - [ ] Decide whether to re-tag with gemini-3.8-flash (cost for ~2,800 videos)
-- [ ] 151 `llm_tagged` rows don't join to `videos`/`channels` (2,978 tagged, 2,827 joined on 2026-11-05)
+- [ ] 1 `llm_tagged` video has a `videos` row but its channel (`UCMyOj6fhvKFMjxUCp3b_3gA`) isn't in `channels`. The other 150 rows that don't join to `videos` are the 3 channels removed on 2026-10-21 (tags kept by rule), so they're expected (checked 2026-11-05)
 - [x] EDA of creators and videos: `notebooks/00_eda_charts.ipynb` reproduces the EDA slides (2026-10-15); training subset = videos tagged before `config.ANALYSIS_TAGGED_BEFORE` (3:30 PT Oct 15, 726 videos)
 
 **Phase I deliverables**
