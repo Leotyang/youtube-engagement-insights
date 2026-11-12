@@ -34,11 +34,20 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] Rename the GitHub repo to `youtube-engagement-insights` (docs already point at the new URL); set description and topics
 - [ ] README TODOs: credits (team and roles), what "sentiment" means, dashboard screenshot and usage once built
 - [ ] Commit-author emails: switch to the GitHub no-reply address going forward (10 early commits show a work email)
+- [ ] Scheduled runs start 4-7 h late (09:00 UTC cron, actual 13:13-16:02 UTC, Oct 22-27); tagging only follows ingest by luck. Consider `workflow_run` so tagging starts when ingest finishes, and an off-the-hour cron
+- [ ] Orphan video `tzQOn3mU7EA` (channel "Chef Nick", not on the sheet) sits in `videos` unrefreshed since 2026-10-21; delete it by hand or ignore
+- [ ] Check the sheet URLs of Wayne Hu (0 videos in the past year) and Not My Business (2)
 - [ ] Delete the duplicate `llm_tagged` row for QX3txldu5h4 (keep the 2026-10-15 22:23 one), and make tagger writes insert-only-if-new
 - [ ] Decide a brand vs independent-creator rule: triple j (ABC radio, 768 videos/yr, ~11K median views on 2.1M subs) looks like On The Radar Radio; Architectural Digest is Condé Nast like the removed Bon Appétit; Jubilee, First We Feast, Cut are media companies
 - [ ] Wayne Hu (@nogatekeepers) has no uploads in the past year (contributes no videos); Stavvy's World still has a search link instead of a channel link
 - [ ] Decide sampling for later batches: most recent X vs evenly spread over the year (prolific channels' 50 newest span only days)
 - [x] AI vs manual comparison on the 5 hand-tagged videos in our data: `notebooks/03_ai_vs_manual.ipynb` (64% exact, 86% within 1, MAE 0.55, presence F1 0.76; worst: Production, Audience Hooks, Tone). The 3 manual videos outside the tagging queue were tagged as a one-off on 2026-10-15
+- [x] Class tagging form: `apps_script/build_tagging_form.gs` builds a Google Form from Content Traits (one required question per trait, pre-filled to 0, no email collected); each submission adds a column to Manual Tagging (2026-10-29)
+- [ ] Install the form: paste the script into the sheet's Apps Script editor, run `buildTaggingForm`, share the pre-filled link with the class
+- [ ] Update `03_ai_vs_manual` to match manual columns by the video URL in the header note (not only by title), and to handle several taggers per video
+- [x] Professor-meeting analysis (2026-11-04): `04_eda_current`, `05_age_normalization`, `06_tag_downstream_eval`; brief in `docs/2026-11-04_professor_meeting.md`
+- [ ] After the meeting: pick the engagement target (curve-normalized vs observed day-7 vs age control), the evaluation yardstick (within-channel vs held-out channel), the creator-population rule, and one Shorts definition (60 s vs 180 s)
+- [ ] `06_tag_downstream_eval` has no markdown section headers; add them
 - [ ] Re-run it as teammates add manual tags (the 6th manual video, the Abandoned Church one, is not in our scrape)
 - [x] EDA of creators and videos: `notebooks/00_eda_charts.ipynb` reproduces the EDA slides (2026-10-15); training subset = videos tagged before `config.ANALYSIS_TAGGED_BEFORE` (3:30 PT Oct 15, 726 videos)
 

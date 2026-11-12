@@ -77,6 +77,24 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-11-04:** Analysis for the professor meeting (branch `leotyang/analysis-2026-11-04`; brief in
+  `docs/2026-11-04_professor_meeting.md`, figures in `docs/figures/`). Age normalization (`05`): a per-format growth
+  curve from 188K daily pairs (views x1.9 day 1-7, x1.2 day 7-30) cuts held-out-channel error ~45% under a week and
+  21-28% at 7-30 days; size/genre-specific curves don't transfer to unseen channels, a channel-decay adjustment
+  helps; past 30 days the curve can't be validated yet. 256 videos already have directly observed day-7 views
+  (+~250/week). Tag validation (`06`, 2,788 videos, 51 channels): the random-split gain (+0.26 R2) is ~95% channel
+  identity (within-channel shuffle control); real within-channel gain +0.014 (views) / +0.033 (likes); ordinal 0-4
+  encoding best; Gemini re-tag of 100 videos ($0.50) agrees 88% exact with itself vs 64% with the human tagger.
+  EDA (`04`): median channel 4.9M subs, 8 channels look like organisations (33% of videos), channel explains 68% of
+  log-view variance; tagged subset is younger (median 47 vs 190 days) and has no videos over 30 min. Shorts are
+  defined as <= 60 s in `05` but <= 180 s in `04`/`06`; standardize after the meeting.
+- **2026-10-29:** Nightly pipeline verified Oct 22-27: one snapshot per video per day, no gaps, tagging keeps
+  pace with uploads (~30/day after the 491-video backlog). Scheduled runs start 4-7 h late (GitHub cron delay).
+  Added `apps_script/build_tagging_form.gs` so the class can hand-tag any YouTube video: a Google Form built from
+  the Content Traits tab (one required question per trait; defaults of 0 via a pre-filled link, since Forms has
+  no default answers; no email collected). Submissions land in the form's responses tab and, via an onFormSubmit
+  trigger, as a new column in Manual Tagging (header = title from YouTube oEmbed, note = URL and time; a script
+  lock keeps simultaneous submissions from colliding).
 - **2026-10-22:** Repo made public (linked from Leo's resume). README rewritten as a manual (overview, status,
   Mermaid pipeline, the two workflows, data counts, early results, setup, structure); the original proposal moved
   to `docs/PROPOSAL.md`. GIT_WORKFLOW.md § 8 covers reading Actions logs, rerunning, and common failures.

@@ -74,6 +74,7 @@ flowchart LR
 | Ingest | [`src/ingest.py`](src/ingest.py), [`src/youtube_api.py`](src/youtube_api.py) | For every channel on the sheet: upsert channel and video metadata, add new uploads from the past 365 days, re-fetch every video's counts, and write one snapshot row per video and per channel per day |
 | Storage | [`src/bigquery_io.py`](src/bigquery_io.py) | Typed loads, upserts, and date-partitioned snapshot tables whose daily partition is overwritten, so rerunning a day is safe |
 | Tagging | [`src/tag_videos.py`](src/tag_videos.py) | Gemini watches each video from its public URL and returns one integer per trait, enforced by a JSON schema. Queue: each channel's 50 newest videos of 30 minutes or less, round-robin across channels. Parallel requests with jittered retries; stops before the per-run spend cap |
+| Human tagging | [`apps_script/build_tagging_form.gs`](apps_script/build_tagging_form.gs) | Builds a Google Form from the trait list (one 0-4 or 0/1 question per trait, all starting at 0). Each submission adds a column to the sheet's Manual Tagging tab, the human baseline the AI tags are compared against |
 | Modeling | [`notebooks/`](notebooks) | One-hot trait encoding plus YouTube metadata and tag features; OLS baseline, then Lasso with the penalty chosen by 5-fold CV on the training split and a held-out 20% test set |
 
 ## Automated workflows
@@ -193,6 +194,7 @@ src/
   sheet.py           creator list from the Google Sheet
   traits.py          trait list from the Google Sheet
 notebooks/           00 EDA, 01 OLS baseline, 02 Lasso, 03 AI vs manual tags
+apps_script/         build_tagging_form.gs: Google Form for human trait tagging, synced to the sheet
 docs/                PROPOSAL.md (original project proposal)
 TODO.md              task list and open questions
 ```
