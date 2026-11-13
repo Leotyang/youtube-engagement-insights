@@ -77,6 +77,12 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-11-12 (evening, deck):** Sections 02 and 04 finished (teammates own the rest). Slide 24 = option 2 results with
+  `age_option2_interactions.png` (only age x channel is interacted; all 79 traits are plain main effects). Options 1-3
+  results slides share the same stats; new slide 28 compares every option and option-3 day window on the same metrics
+  (`data/analysis/age_options_metrics.csv`, last two cells of notebook 07). Compare by real and shuffled gain
+  separately: real minus shuffled makes option 3 look best only because shuffled traits overfit more on small samples.
+  Speaker notes in both sections explain each chart and its implication for the age question.
 - **2026-11-12:** Professor feedback (Nov 4): treat the project as explainability, with age as the main confounder;
   control it several ways and check the drivers agree; evaluate the LLM tags per trait against human tags with a
   rank-based loss. `notebooks/07_age_options.ipynb` (uses the Oct 15 pull + daily log, 296K day-to-day pairs) compares
@@ -280,13 +286,15 @@ insert an image from a public URL, so: copy the PNG into the public Drive folder
 with Drive for Desktop: `xattr -p 'com.google.drivefs.item-id#S' <file>`), then `createImage` / `replaceImage` with
 `https://drive.google.com/uc?export=download&id=<ID>`. The charts on the slides are images, not editable charts.
 
-**Slide map (object IDs, as of 2026-11-12):** 1 `p1` cover · 2 `p2` overview (still lists the old four updates; to redo
+**Slide map (object IDs, as of 2026-11-12, evening):** 1 `p1` cover · 2 `p2` overview (still lists the old four updates; to redo
 as the six-section agenda) · 3 `sec01` cover "Our Dataset" · 4 `p3` class hand-tagging form · 5 `p4` EDA channels ·
 6 `p5` EDA videos · 7 `eda_age_avail` data available at each age · 8 `p6` tagged subset · 9 `sec02` "New Data Pipeline" ·
 10 `p7` daily log · 11 `p8` pipeline DAG · 12 `p9` BigQuery tables · 13 `p10` universal growth curve (speaker note has the
 math) · 14 `sec03` "AI Tagging vs Manual Tagging" · 15-18 `p17`-`p20` (two yardsticks, exact match vs ranks, per-trait
-triage, signal by triage group) · 19 `sec04` "Normalizing for Video Age" · 20-28 `age_a19`-`age_a27` (three options,
-option 1 how/results, option 2 per-channel curve / k by channel / vs option 1, option 3 design/results, comparison) ·
+triage, signal by triage group) · 19 `sec04` "Normalizing for Video Age" · 20-28 `age_a19`-`age_a28` (20 three options,
+21-22 option 1 how/results, 23 option 2 per-channel curve, 24 option 2 results = interaction chart
+`age_option2_interactions.png`, 25-26 option 3 design/results with a per-window metrics table, 27 comparison charts,
+28 comparison table of every option on the same metrics; options 1-3 results slides share the same two stats) ·
 29 `sec05` "Explainability vs Predictability" · 30 a teammate's slide "Explainability & Predictability" · 31 `sec06`
 "Final Product and Next Steps" · 32 `p21` next steps and questions · 33 `p22` end. Section covers: `secNN` + `_label`,
 `_title`, `_subtitle`, `_num` text boxes.
@@ -298,7 +306,8 @@ videos that had none) plus `notebooks/06`; section 04 = `notebooks/07_age_option
 `data/analysis/`, so rerun it on a new computer before reusing those numbers).
 
 **Open items for the deck:** section 05 content (beyond-coefficients explainability: permutation importance, SHAP,
-partial dependence, causal methods), the overview slide, speaker notes for most slides, and porting
+partial dependence, causal methods), the overview slide, speaker notes outside sections 02 and 04 (those were
+written 2026-11-12: what each chart shows, how to read it, what it means for the age question), and porting
 `analysis/human_vs_ai/human_vs_llm.py` and the trait-group signal check into a notebook.
 
 ## Repo conventions
