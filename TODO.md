@@ -48,6 +48,14 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [x] Professor-meeting analysis (2026-11-04): `04_eda_current`, `05_age_normalization`, `06_tag_downstream_eval`; brief in `docs/2026-11-04_professor_meeting.md`
 - [ ] After the meeting: pick the engagement target (curve-normalized vs observed day-7 vs age control), the evaluation yardstick (within-channel vs held-out channel), the creator-population rule, and one Shorts definition (60 s vs 180 s)
 - [ ] `06_tag_downstream_eval` has no markdown section headers; add them
+- [x] Age as a confounder, three options compared: `notebooks/07_age_options.ipynb` (2026-11-12); option 2 (curve per channel, factor k) projects best and gives the same trait effects as option 1
+- [ ] Fit the growth curve on median (not mean) log growth: both curves over-project videos 21+ days old, where no-growth is more accurate
+- [ ] Revisit option 3 (views at a fixed age) in about a month, when each age has more tagged videos and the same videos are seen at days 3, 7, 14, 30
+- [ ] Test trait x age interactions on a shortlist (do some traits pay off later, 'evergreen'?)
+- [ ] Collect 30-50 more hand-tagged videos through the class form (only 2 form submissions so far), focused on the 51 recalibrate / drop-or-redefine traits
+- [ ] Rewrite definitions for the traits humans and the AI disagree on most (call to action, promotional, relatability, curiosity gap, face on camera); humans also scored yes/no traits on 0-4
+- [ ] Find out why the Nov 8 ingest run never fired; add an alert for missed nightly runs
+- [ ] Deck section 05 (explainability vs predictability) has no content slides yet
 - [ ] Re-run it as teammates add manual tags (the 6th manual video, the Abandoned Church one, is not in our scrape)
 - [x] EDA of creators and videos: `notebooks/00_eda_charts.ipynb` reproduces the EDA slides (2026-10-15); training subset = videos tagged before `config.ANALYSIS_TAGGED_BEFORE` (3:30 PT Oct 15, 726 videos)
 

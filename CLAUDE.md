@@ -77,6 +77,22 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-11-12:** Professor feedback (Nov 4): treat the project as explainability, with age as the main confounder;
+  control it several ways and check the drivers agree; evaluate the LLM tags per trait against human tags with a
+  rank-based loss. `notebooks/07_age_options.ipynb` (uses the Oct 15 pull + daily log, 296K day-to-day pairs) compares
+  (1) one universal curve (breakpoint every day to day 30; smoothing penalty tested, not needed), (2) a curve per
+  channel: universal curve x a channel factor k (0.44-1.72, shrunk toward 1; the interaction-term model fitted on the
+  daily log, not one snapshot, which made the earlier version jagged), (3) views at exactly day 3/7/14/30/60/90 (190-890
+  tagged per age). Metric 1 = projection from one snapshot 14 days ahead (held-out videos): typical error 7.4% no
+  growth, 5.3% option 1, 4.5% option 2, 4.0% option 3 lookup (only where both ages are logged); from a 1-day-old
+  snapshot 104% -> 26% / 23%. Both curves over-project videos 21+ days old (mean-based fit). Metric 2 = trait signal:
+  +0.24 / +0.26 pps (options 1/2) vs -0.76 shuffled; option 3 negative at every age. Options 1 and 2 give the same
+  trait effects (r = 1.00). Channel identity explains ~70% of log views at every age (3-90 days), no trend. Plan:
+  option 2 to normalize/project. Human vs AI on 23 hand-tagged videos (10 tagged for this, $0.42): exact 63% = all-zeros
+  baseline; rank agreement per video 0.69; triage 26 trust / 26 recalibrate / 25 drop-or-redefine, signal sits in the
+  latter two. Progress deck lives in Google Slides (`DSO 585/Project`), edited via the service account (Slides API);
+  chart PNGs from `docs/figures/` sync to the public `Project/deck_figures` folder (copy under a new name: overwriting
+  loses the Drive ID). Nov 8 had no snapshot (missed run).
 - **2026-11-04:** Analysis for the professor meeting (branch `leotyang/analysis-2026-11-04`; brief in
   `docs/2026-11-04_professor_meeting.md`, figures in `docs/figures/`). Age normalization (`05`): a per-format growth
   curve from 188K daily pairs (views x1.9 day 1-7, x1.2 day 7-30) cuts held-out-channel error ~45% under a week and
@@ -244,6 +260,46 @@ short; this is a running log, not a report.
   optimization model methodology in depth (nested vs. fully-segmented modeling,
   confounding vs. effect modification) to sharpen the slide bullets; no data
   collection or modeling has started yet.
+
+## Progress deck (Google Slides) and how to continue it
+
+**Deck:** https://docs.google.com/presentation/d/1-wQADZx76ESW--hegJxXh0cmfvM0C9b7TkOz1WIRaqU/edit (team Drive,
+`DSO 585/Project`; "anyone with the link can edit"). Teammates edit it live, so **never re-upload a rebuilt .pptx**:
+change it element by element through the Slides API, which merges with their edits.
+
+**Access (set up once per computer):** the service account `id-585-project-16336@dso-585-project-16336.iam.gserviceaccount.com`
+edits the deck. Its key goes in `.env` as `GOOGLE_APPLICATION_CREDENTIALS` (same key the pipeline uses; never commit it).
+The Slides API is enabled on the project. `deck/slides_api.py` holds the helpers (`slides`, `PID`, `rect`, `text`, `card`,
+`stat`, `key_finding`, `source`, `new_content_slide`, `set_notes`, `run`); positions are in inches on a 10 x 5.625 slide.
+Look a slide up first (`slides.get(presentationId=PID)`), then send one `batchUpdate`; check the result with
+`slides.pages().getThumbnail(...)`.
+
+**Charts are matplotlib PNGs** from `notebooks/07_age_options.ipynb` (and 04-06) in `docs/figures/`. Slides can only
+insert an image from a public URL, so: copy the PNG into the public Drive folder `DSO 585/Project/deck_figures`
+**under a new file name** (overwriting a synced file loses its Drive ID), get its file ID (Drive "Copy link", or on a Mac
+with Drive for Desktop: `xattr -p 'com.google.drivefs.item-id#S' <file>`), then `createImage` / `replaceImage` with
+`https://drive.google.com/uc?export=download&id=<ID>`. The charts on the slides are images, not editable charts.
+
+**Slide map (object IDs, as of 2026-11-12):** 1 `p1` cover · 2 `p2` overview (still lists the old four updates; to redo
+as the six-section agenda) · 3 `sec01` cover "Our Dataset" · 4 `p3` class hand-tagging form · 5 `p4` EDA channels ·
+6 `p5` EDA videos · 7 `eda_age_avail` data available at each age · 8 `p6` tagged subset · 9 `sec02` "New Data Pipeline" ·
+10 `p7` daily log · 11 `p8` pipeline DAG · 12 `p9` BigQuery tables · 13 `p10` universal growth curve (speaker note has the
+math) · 14 `sec03` "AI Tagging vs Manual Tagging" · 15-18 `p17`-`p20` (two yardsticks, exact match vs ranks, per-trait
+triage, signal by triage group) · 19 `sec04` "Normalizing for Video Age" · 20-28 `age_a19`-`age_a27` (three options,
+option 1 how/results, option 2 per-channel curve / k by channel / vs option 1, option 3 design/results, comparison) ·
+29 `sec05` "Explainability vs Predictability" · 30 a teammate's slide "Explainability & Predictability" · 31 `sec06`
+"Final Product and Next Steps" · 32 `p21` next steps and questions · 33 `p22` end. Section covers: `secNN` + `_label`,
+`_title`, `_subtitle`, `_num` text boxes.
+
+**Where the numbers come from:** section 01 EDA and slide 8 = BigQuery on the Nov 12 snapshot; section 02 = BigQuery
+table metadata; section 03 = `analysis/human_vs_ai/human_vs_llm.py` (23 hand-tagged videos from the Manual Tagging tab;
+`manual_cols.json` maps sheet columns to video IDs, `manual_llm_scores.json` holds the Gemini tags bought for the 10
+videos that had none) plus `notebooks/06`; section 04 = `notebooks/07_age_options.ipynb` (writes CSVs to the gitignored
+`data/analysis/`, so rerun it on a new computer before reusing those numbers).
+
+**Open items for the deck:** section 05 content (beyond-coefficients explainability: permutation importance, SHAP,
+partial dependence, causal methods), the overview slide, speaker notes for most slides, and porting
+`analysis/human_vs_ai/human_vs_llm.py` and the trait-group signal check into a notebook.
 
 ## Repo conventions
 
