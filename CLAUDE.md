@@ -77,6 +77,17 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-11-13:** After the presentation: rebuilding the age analysis from scratch, one notebook per option (07 stays as
+  the presented version). Snapshot pinned to 2026-11-13 (24 snapshot days, 325K rows, 14,068 videos, 310K day-to-day
+  pairs). `08_age_option1_universal_curve`: curve from every video's daily growth (smoothing chosen by CV = 0), day-after-
+  day growth chart (+31% day 1->2, +3.8% at day 7, ~1% at day 14, 0.3% at day 30), every video normalized to day 30.
+  Findings: (1) the curve fits the MEAN daily growth, which a few fast growers pull up, so its bias is ~0 but its typical
+  error beats no-growth only for starting snapshots under 14 days old (day 1-3: 22% vs 44%); from day 14 on, no-growth
+  has the smaller typical error; held-out channels do as well as held-out videos. (2) Normalizing over-corrects: within a
+  channel, raw log views barely trend with age after day 14 (slope +0.03 on log age), while normalized views fall with age
+  (-0.12; 240-400-day videos -0.22). (3) Trait signal unchanged: +0.14 pps vs -0.74 shuffled (3,061 tagged videos).
+  Next: option 2 (`09`, 68 age terms on the daily log) and option 3 (`10`); consider a median-based curve.
+  Environment: Leo works in conda base (the repo `.venv` was deleted); `.env`'s credentials path is per computer.
 - **2026-11-12 (evening, deck):** Sections 02 and 04 finished (teammates own the rest). Slide 24 = option 2 results with
   `age_option2_interactions.png` (only age x channel is interacted; all 79 traits are plain main effects). Options 1-3
   results slides share the same stats; new slide 28 compares every option and option-3 day window on the same metrics

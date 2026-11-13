@@ -162,12 +162,13 @@ sample.
 GitHub Actions uses the repository secrets `YOUTUBE_API_KEY` and `GOOGLE_SERVICE_ACCOUNT_JSON` instead.
 Sheet, project, dataset, tagging model and budget settings are in [`src/config.py`](src/config.py).
 
-**Install**
+**Install** (any Python environment works; Leo uses conda base instead of a `.venv`)
 ```bash
-python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt              # pipeline
 pip install -r requirements-notebooks.txt    # also for the notebooks
 ```
+`GOOGLE_APPLICATION_CREDENTIALS` in `.env` must be this computer's absolute path to the key (a `.env` copied from
+a Mac keeps `/Users/...`). Restart the notebook kernel after changing `.env`.
 
 **Run**
 ```bash
@@ -193,7 +194,8 @@ src/
   bigquery_io.py     BigQuery reads, writes, snapshot tables
   sheet.py           creator list from the Google Sheet
   traits.py          trait list from the Google Sheet
-notebooks/           00 EDA, 01 OLS baseline, 02 Lasso, 03 AI vs manual tags
+notebooks/           00 EDA, 01 OLS baseline, 02 Lasso, 03 AI vs manual tags, 04-06 professor-meeting analysis,
+                     07 age options as presented (2026-11-12), 08-10 one notebook per age-normalization option
 apps_script/         build_tagging_form.gs: Google Form for human trait tagging, synced to the sheet
 docs/                PROPOSAL.md (original project proposal)
 TODO.md              task list and open questions

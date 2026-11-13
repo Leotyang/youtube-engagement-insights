@@ -49,7 +49,12 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
 - [ ] After the meeting: pick the engagement target (curve-normalized vs observed day-7 vs age control), the evaluation yardstick (within-channel vs held-out channel), the creator-population rule, and one Shorts definition (60 s vs 180 s)
 - [ ] `06_tag_downstream_eval` has no markdown section headers; add them
 - [x] Age as a confounder, three options compared: `notebooks/07_age_options.ipynb` (2026-11-12); option 2 (curve per channel, factor k) projects best and gives the same trait effects as option 1
-- [ ] Fit the growth curve on median (not mean) log growth: both curves over-project videos 21+ days old, where no-growth is more accurate
+- [ ] Evaluate each age-normalization option in its own notebook (rebuild of 07 from scratch, all videos, snapshot pinned to 2026-11-13, same evaluation in each: 14-day projection held out by video and by channel, bias by start age, residual age trend, trait signal; metrics to `data/analysis/optionN_metrics.csv`)
+  - [x] `08_age_option1_universal_curve`: one curve for every video, day-after-day growth chart (2026-11-13; beats no-growth only for snapshots under 14 days old, over-corrects old videos)
+  - [ ] `09_age_option2_curve_by_format_size`: 17 age-curve pieces x [1, Shorts, log subscribers, Shorts x log subscribers] (68 age terms, fitted on the daily log; no per-channel k)
+  - [ ] `10_age_option3_fixed_age`: views at exactly day 3/7/14/30/60/90
+  - [ ] Comparison notebook reading the three metrics files
+- [ ] Fit the growth curve on median (not mean) log growth: both curves over-project videos 21+ days old, where no-growth is more accurate (confirmed in `08` on the Nov 13 snapshot: no-growth wins from day 14, and normalized views fall with age within channel)
 - [ ] Revisit option 3 (views at a fixed age) in about a month, when each age has more tagged videos and the same videos are seen at days 3, 7, 14, 30
 - [ ] Test trait x age interactions on a shortlist (do some traits pay off later, 'evergreen'?)
 - [ ] Collect 30-50 more hand-tagged videos through the class form (only 2 form submissions so far), focused on the 51 recalibrate / drop-or-redefine traits
