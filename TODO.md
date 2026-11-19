@@ -3,7 +3,7 @@
 Working notes for the next stage after YouTube ingestion. See [README.md](README.md) for
 the project overview and [CLAUDE.md](CLAUDE.md) for the status log.
 
-Last updated: 2026-10-22 (public repo, README rewrite)
+Last updated: 2026-11-19 (growth-curve CV redesign, model-free trait importance plan)
 
 ---
 
@@ -55,6 +55,8 @@ Kept in sync with actual project status (see [CLAUDE.md](CLAUDE.md)).
   - [ ] `10_age_option3_fixed_age`: views at exactly day 3/7/14/30/60/90
   - [ ] Comparison notebook reading the three metrics files
 - [ ] Fit the growth curve on median (not mean) log growth: both curves over-project videos 21+ days old, where no-growth is more accurate (confirmed in `08` on the Nov 13 snapshot: no-growth wins from day 14, and normalized views fall with age within channel)
+- [ ] Redesign the growth-curve evaluation (agreed 2026-11-19; applies to notebooks 08-10): 5 folds grouped by CHANNEL; curve fitted only on training channels' day-to-day pairs; per test video ONE randomly sampled observed pair (start age s, target s + h) for h = 7, 14, 21 (both endpoints observed, no 'consecutive' requirement, so the Nov 8 gap doesn't drop videos); project forward and backward (same |log error|, sign flipped); report typical error exp(median |log err|) - 1 and bias (mean log err) vs the no-growth baseline BY start-age bucket (1-3, 4-7, 8-14, 15-30, 31-90, 91+ days) and horizon, never only pooled (old videos dominate and are trivial). Plot the curve with (a) a channel-bootstrap confidence band and (b) a prediction band = 10th-90th percentile of held-out log errors by age
+- [ ] Model-free trait importance (agreed 2026-11-19), on age-normalized log views, traits limited to the 'trust' and 'recalibrate' triage groups (flag 'drop' traits separately): (1) within-channel contrast: per channel, median of trait >= 2 minus trait = 0, averaged across channels weighted by count; permutation test (shuffle the trait within channel, 1,000 times) for p-values; Benjamini-Hochberg FDR across traits; share of channels agreeing in sign; (2) Spearman between the 0-4 score and each video's within-channel percentile rank; then compare the trait ranking with the ridge coefficients (Spearman between the two lists). Later: lift among each channel's top-20% videos, coarsened exact matching for the top 5-10 traits, day 1->7 growth by trait
 - [ ] Revisit option 3 (views at a fixed age) in about a month, when each age has more tagged videos and the same videos are seen at days 3, 7, 14, 30
 - [ ] Test trait x age interactions on a shortlist (do some traits pay off later, 'evergreen'?)
 - [ ] Collect 30-50 more hand-tagged videos through the class form (only 2 form submissions so far), focused on the 51 recalibrate / drop-or-redefine traits

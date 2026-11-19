@@ -77,6 +77,15 @@ Update this section (newest entry on top) as the project progresses — data sou
 finalized, methods chosen/changed, key findings, blockers, pivots, etc. Keep entries
 short; this is a running log, not a report.
 
+- **2026-11-19:** Planning only, no new results. (1) Growth-curve evaluation redesigned for notebooks 08-10 (TODO.md
+  has the spec): folds grouped by channel, one random observed pair per test video at horizons 7/14/21 days, metrics by
+  start-age bucket vs no-growth, channel-bootstrap band on the curve plus an empirical prediction band. Predicting day 7
+  back from day 21 is the same 14-day test as forward (identical |log error|), so the horizon, not the direction, is
+  what to vary; a strict 3-week-consecutive rule would drop every young video (the use case) and every video hit by
+  the Nov 8 gap. (2) Trait importance without a predictive model: within-channel contrasts with a within-channel
+  permutation test, BH-FDR and sign consistency across channels, plus Spearman vs within-channel percentile rank;
+  compare the ranking with the ridge coefficients to answer the professor's "do the drivers agree" check. The deck
+  slide map below predates the 2026-11-12/13 edits on slides 24-28 (re-read the deck before relying on it).
 - **2026-11-13:** After the presentation: rebuilding the age analysis from scratch, one notebook per option (07 stays as
   the presented version). Snapshot pinned to 2026-11-13 (24 snapshot days, 325K rows, 14,068 videos, 310K day-to-day
   pairs). `08_age_option1_universal_curve`: curve from every video's daily growth (smoothing chosen by CV = 0), day-after-
